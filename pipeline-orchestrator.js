@@ -78,10 +78,12 @@ function getDriveClient() {
   return { drive: google.drive({ version: 'v3', auth }), auth };
 }
 
-async function appendToSheet(auth, rows) {
+async function appendToSheet(rows) {
   const sheetId = process.env.GOOGLE_SHEETS_ID;
   if (!sheetId) return;
   try {
+    // Use service account auth (same credentials as Drive)
+    const { auth } = getDriveClient();
     const sheets = google.sheets({ version: 'v4', auth });
     await sheets.spreadsheets.values.append({
       spreadsheetId: sheetId,
@@ -131,45 +133,60 @@ const GHL_H    = {
 
 async function getOrCreateContact(lead) {
   const phone = lead.phone.replace(/\D/g, '');
-  try {
-    const res = await axios.get(`${GHL_BASE}/contacts/`, {
-      headers: GHL_H,
-      params: { locationId: process.env.GHL_LOCATION_ID, query: phone, limit: 1 },
-    });
-    const existing = res.data?.contacts?.[0];
-    if (existing) return existing.id;
-  } catch {}
 
-  const res = await axios.post(`${GHL_BASE}/contacts/`, {
+  // Search first
+  const searchRes = await axios.get(`${GHL_BASE}/contacts/`, {
+    headers: GHL_H,
+    params: { locationId: process.env.GHL_LOCATION_ID, query: phone, limit: 1 },
+  });
+  const existing = searchRes.data?.contacts?.[0];
+  if (existing) {
+    log(`    Contact found: ${existing.id}`);
+    return existing.id;
+  }
+
+  // Create
+  const createRes = await axios.post(`${GHL_BASE}/contacts/`, {
     locationId: process.env.GHL_LOCATION_ID,
-    firstName: lead.name,
-    phone: lead.phone,
-    email: lead.email || undefined,
-    website: lead.website || undefined,
-    tags: ['medspa-lead', 'audit-prospect', lead.city.split(',')[0].trim()],
-    customFields: lead.instagram
-      ? [{ key: 'instagram', value: lead.instagram }] : [],
+    firstName:  lead.name,
+    phone:      lead.phone,
+    email:      lead.email || undefined,
+    website:    lead.website || undefined,
+    tags:       ['medspa-lead', 'audit-prospect', lead.city.split(',')[0].trim()],
   }, { headers: GHL_H });
-  return res.data?.contact?.id;
+
+  const id = createRes.data?.contact?.id;
+  if (!id) throw new Error(`Contact create failed: ${JSON.stringify(createRes.data)}`);
+  log(`    Contact created: ${id}`);
+  return id;
 }
 
-async function triggerWorkflow(contactId) {
-  // Use GHL workflow to send SMS (same approach as mystery-texter.js — known working)
-  await axios.post(
-    `${GHL_BASE}/contacts/${contactId}/workflow/${process.env.GHL_WORKFLOW_ID}`,
-    {},
-    { headers: GHL_H }
-  );
-}
-
-async function getConversationId(contactId) {
-  // Workflow creates the conversation — wait briefly then look it up
-  await new Promise(r => setTimeout(r, 4000));
-  const res = await axios.get(`${GHL_BASE}/conversations/search`, {
+async function getOrCreateConversation(contactId) {
+  const search = await axios.get(`${GHL_BASE}/conversations/search`, {
     headers: GHL_H,
     params: { locationId: process.env.GHL_LOCATION_ID, contactId },
   });
-  return (res.data?.conversations || res.data?.data)?.[0]?.id || null;
+  const existing = search.data?.conversations?.[0];
+  if (existing) return existing.id;
+
+  const res = await axios.post(`${GHL_BASE}/conversations/`, {
+    locationId: process.env.GHL_LOCATION_ID,
+    contactId,
+  }, { headers: GHL_H });
+  const id = res.data?.conversation?.id || res.data?.id;
+  if (!id) throw new Error(`Conversation create failed: ${JSON.stringify(res.data)}`);
+  return id;
+}
+
+async function sendSMS(contactId, conversationId) {
+  // contactId is required in GHL V2 message payload
+  const res = await axios.post(`${GHL_BASE}/conversations/messages`, {
+    type:           'SMS',
+    contactId,
+    conversationId,
+    message:        'Hi there! Saw your med spa online and wanted to ask about pricing for Botox. Do you have a menu or consult I could book?',
+  }, { headers: GHL_H });
+  return res.data?.messageId || res.data?.id;
 }
 
 async function checkResponses(entries) {
@@ -454,12 +471,12 @@ async function phase2_scrapeAndSend() {
     const phone = lead.phone.replace(/\D/g, '');
     try {
       const contactId      = await getOrCreateContact(lead);
-      await triggerWorkflow(contactId);
-      const conversationId = await getConversationId(contactId);
+      const conversationId = await getOrCreateConversation(contactId);
+      await sendSMS(contactId, conversationId);
       contacted.add(phone);
       batch.leads.push({ ...lead, contactId, conversationId, sentAt: new Date().toISOString(), status: 'pending' });
       smsSent++;
-      log(`  SMS → ${lead.name} (${lead.phone})`);
+      log(`  ✅ SMS → ${lead.name} (${lead.phone})`);
     } catch (e) {
       log(`  ❌ SMS failed for ${lead.name}: ${e.message}`);
     }
@@ -473,17 +490,12 @@ async function phase2_scrapeAndSend() {
   log(`  Phase 2 done — ${smsSent} SMS sent`);
 
   // Log to Google Sheets
-  try {
-    const { auth } = getDriveClient();
-    const sheetRows = batch.leads.map(l => [
-      l.sentAt, l.name, l.city, l.phone, l.email || '', l.website || '',
-      l.rating || '', l.reviews || '', 'sms_sent', '',
-    ]);
-    await appendToSheet(auth, sheetRows);
-    log(`  Logged ${sheetRows.length} rows to Sheets`);
-  } catch (e) {
-    log(`  Sheets logging failed: ${e.message}`);
-  }
+  const sheetRows = batch.leads.map(l => [
+    l.sentAt, l.name, l.city, l.phone, l.email || '', l.website || '',
+    l.rating || '', l.reviews || '', 'sms_sent', '',
+  ]);
+  await appendToSheet(sheetRows);
+  log(`  Logged ${sheetRows.length} rows to Sheets`);
 }
 
 // ─── Main pipeline run ────────────────────────────────────────────────────────
