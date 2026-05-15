@@ -250,15 +250,17 @@ async function scrapeLeads(city, count, contacted) {
         const res = await axios.get('https://maps.googleapis.com/maps/api/place/textsearch/json', { params });
         for (const place of (res.data.results || [])) {
           if (leads.length >= count) break;
-          const phone = (place.formatted_phone_number || '').replace(/\D/g, '');
-          if (!phone || seen.has(phone) || contacted.has(phone)) continue;
+          if (seen.has(place.place_id)) continue;
+          seen.add(place.place_id);
 
-          // Get details
+          // Get details (phone not in text search results)
           const det = await axios.get('https://maps.googleapis.com/maps/api/place/details/json', {
             params: { place_id: place.place_id, fields: 'name,formatted_phone_number,website,rating,user_ratings_total,formatted_address', key: MAPS_KEY },
           });
           const d = det.data.result;
-          seen.add(phone);
+          const phone = (d.formatted_phone_number || '').replace(/\D/g, '');
+          if (!phone || contacted.has(phone)) continue;
+
           leads.push({
             name:    d.name,
             phone:   d.formatted_phone_number || '',
