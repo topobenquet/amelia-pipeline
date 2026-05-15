@@ -70,9 +70,28 @@ function getDriveClient() {
 
   const auth = new google.auth.GoogleAuth({
     credentials,
-    scopes: ['https://www.googleapis.com/auth/drive.file'],
+    scopes: [
+      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/spreadsheets',
+    ],
   });
-  return google.drive({ version: 'v3', auth });
+  return { drive: google.drive({ version: 'v3', auth }), auth };
+}
+
+async function appendToSheet(auth, rows) {
+  const sheetId = process.env.GOOGLE_SHEETS_ID;
+  if (!sheetId) return;
+  try {
+    const sheets = google.sheets({ version: 'v4', auth });
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: sheetId,
+      range: 'Sheet1!A1',
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: rows },
+    });
+  } catch (e) {
+    log(`  Sheets append failed: ${e.message}`);
+  }
 }
 
 async function getDriveFolderId(drive) {
@@ -134,31 +153,23 @@ async function getOrCreateContact(lead) {
   return res.data?.contact?.id;
 }
 
-async function getOrCreateConversation(contactId) {
-  const search = await axios.get(`${GHL_BASE}/conversations/search`, {
+async function triggerWorkflow(contactId) {
+  // Use GHL workflow to send SMS (same approach as mystery-texter.js — known working)
+  await axios.post(
+    `${GHL_BASE}/contacts/${contactId}/workflow/${process.env.GHL_WORKFLOW_ID}`,
+    {},
+    { headers: GHL_H }
+  );
+}
+
+async function getConversationId(contactId) {
+  // Workflow creates the conversation — wait briefly then look it up
+  await new Promise(r => setTimeout(r, 4000));
+  const res = await axios.get(`${GHL_BASE}/conversations/search`, {
     headers: GHL_H,
     params: { locationId: process.env.GHL_LOCATION_ID, contactId },
   });
-  const existing = (search.data?.conversations || search.data?.data)?.[0];
-  if (existing) return existing.id;
-
-  const res = await axios.post(`${GHL_BASE}/conversations/`, {
-    locationId: process.env.GHL_LOCATION_ID,
-    contactId,
-    type: 'SMS',
-  }, { headers: GHL_H });
-  // GHL V2 returns either { id } or { conversation: { id } }
-  const id = res.data?.id || res.data?.conversation?.id;
-  if (!id) throw new Error(`Conversation create returned no ID: ${JSON.stringify(res.data)}`);
-  return id;
-}
-
-async function sendSMS(conversationId) {
-  await axios.post(`${GHL_BASE}/conversations/messages`, {
-    type: 'SMS',
-    conversationId,
-    message: "Hi there! Saw your med spa online and wanted to ask about pricing for Botox. Do you have a menu or consult I could book?",
-  }, { headers: GHL_H });
+  return (res.data?.conversations || res.data?.data)?.[0]?.id || null;
 }
 
 async function checkResponses(entries) {
@@ -353,9 +364,9 @@ async function phase1_processReadyBatches() {
 
   if (!ready.length) { log('  No batches ready for processing'); return; }
 
-  let drive, folderId;
+  let drive, auth, folderId;
   try {
-    drive    = getDriveClient();
+    ({ drive, auth } = getDriveClient());
     folderId = await getDriveFolderId(drive);
   } catch (e) {
     log(`  Drive setup failed: ${e.message}`);
@@ -443,8 +454,8 @@ async function phase2_scrapeAndSend() {
     const phone = lead.phone.replace(/\D/g, '');
     try {
       const contactId      = await getOrCreateContact(lead);
-      const conversationId = await getOrCreateConversation(contactId);
-      await sendSMS(conversationId);
+      await triggerWorkflow(contactId);
+      const conversationId = await getConversationId(contactId);
       contacted.add(phone);
       batch.leads.push({ ...lead, contactId, conversationId, sentAt: new Date().toISOString(), status: 'pending' });
       smsSent++;
@@ -460,6 +471,19 @@ async function phase2_scrapeAndSend() {
   saveState(state);
   saveContacted(contacted);
   log(`  Phase 2 done — ${smsSent} SMS sent`);
+
+  // Log to Google Sheets
+  try {
+    const { auth } = getDriveClient();
+    const sheetRows = batch.leads.map(l => [
+      l.sentAt, l.name, l.city, l.phone, l.email || '', l.website || '',
+      l.rating || '', l.reviews || '', 'sms_sent', '',
+    ]);
+    await appendToSheet(auth, sheetRows);
+    log(`  Logged ${sheetRows.length} rows to Sheets`);
+  } catch (e) {
+    log(`  Sheets logging failed: ${e.message}`);
+  }
 }
 
 // ─── Main pipeline run ────────────────────────────────────────────────────────
