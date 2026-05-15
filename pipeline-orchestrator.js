@@ -41,15 +41,22 @@ function saveContacted(set) {
 
 // ─── Google Drive (Service Account) ──────────────────────────────────────────
 function getDriveClient() {
-  const SA_PATH = process.env.GOOGLE_SERVICE_ACCOUNT_PATH
-    || path.join(__dirname, 'service-account.json');
+  let credentials;
 
-  if (!fs.existsSync(SA_PATH)) {
-    throw new Error(`Service account file not found at ${SA_PATH}.\nSet GOOGLE_SERVICE_ACCOUNT_PATH env var or place service-account.json in the project root.`);
+  // Railway/cloud: service account JSON in env var
+  if (process.env.GOOGLE_SERVICE_ACCOUNT) {
+    credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
+  } else {
+    const SA_PATH = process.env.GOOGLE_SERVICE_ACCOUNT_PATH
+      || path.join(__dirname, 'service-account.json');
+    if (!fs.existsSync(SA_PATH)) {
+      throw new Error(`Service account not found. Set GOOGLE_SERVICE_ACCOUNT env var or place service-account.json here.`);
+    }
+    credentials = JSON.parse(fs.readFileSync(SA_PATH, 'utf8'));
   }
 
   const auth = new google.auth.GoogleAuth({
-    keyFile: SA_PATH,
+    credentials,
     scopes: ['https://www.googleapis.com/auth/drive.file'],
   });
   return google.drive({ version: 'v3', auth });
