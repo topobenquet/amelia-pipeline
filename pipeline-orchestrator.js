@@ -121,12 +121,12 @@ async function getOrCreateContact(lead) {
   return res.data?.contact?.id;
 }
 
-async function getOrCreateConversation(contactId, phone) {
+async function getOrCreateConversation(contactId) {
   const search = await axios.get(`${GHL_BASE}/conversations/search`, {
     headers: GHL_H,
     params: { locationId: process.env.GHL_LOCATION_ID, contactId },
   });
-  const existing = search.data?.conversations?.[0];
+  const existing = (search.data?.conversations || search.data?.data)?.[0];
   if (existing) return existing.id;
 
   const res = await axios.post(`${GHL_BASE}/conversations/`, {
@@ -134,7 +134,10 @@ async function getOrCreateConversation(contactId, phone) {
     contactId,
     type: 'SMS',
   }, { headers: GHL_H });
-  return res.data?.conversation?.id;
+  // GHL V2 returns either { id } or { conversation: { id } }
+  const id = res.data?.id || res.data?.conversation?.id;
+  if (!id) throw new Error(`Conversation create returned no ID: ${JSON.stringify(res.data)}`);
+  return id;
 }
 
 async function sendSMS(conversationId) {
@@ -426,7 +429,7 @@ async function phase2_scrapeAndSend() {
     const phone = lead.phone.replace(/\D/g, '');
     try {
       const contactId      = await getOrCreateContact(lead);
-      const conversationId = await getOrCreateConversation(contactId, phone);
+      const conversationId = await getOrCreateConversation(contactId);
       await sendSMS(conversationId);
       contacted.add(phone);
       batch.leads.push({ ...lead, contactId, conversationId, sentAt: new Date().toISOString(), status: 'pending' });
