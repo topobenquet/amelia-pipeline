@@ -7,6 +7,7 @@ const { google } = require('googleapis');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const LEADS_PER_DAY   = parseInt(process.env.LEADS_PER_DAY || '30');
+const MIN_REVIEWS     = parseInt(process.env.MIN_REVIEWS || '30');
 const STATE_FILE      = path.join(__dirname, 'pipeline-state.json');
 const AUDITS_DIR      = path.join(__dirname, 'audits');
 const CONTACTED_FILE  = path.join(__dirname, 'contacted-phones.json');
@@ -31,8 +32,20 @@ function saveState(state) {
 }
 
 function loadContacted() {
-  try { return new Set(JSON.parse(fs.readFileSync(CONTACTED_FILE, 'utf8'))); }
-  catch { return new Set(); }
+  if (fs.existsSync(CONTACTED_FILE)) {
+    try { return new Set(JSON.parse(fs.readFileSync(CONTACTED_FILE, 'utf8'))); } catch {}
+  }
+  // Rebuild from pipeline state (handles container restarts after redeploy)
+  const state = loadState();
+  const phones = new Set();
+  for (const batch of state.batches) {
+    for (const lead of (batch.leads || [])) {
+      const p = (lead.phone || '').replace(/\D/g, '');
+      if (p) phones.add(p);
+    }
+  }
+  if (phones.size) log(`  Rebuilt contacted list from state: ${phones.size} phones`);
+  return phones;
 }
 
 function saveContacted(set) {
@@ -263,6 +276,7 @@ async function scrapeLeads(city, count, contacted) {
           const d = det.data.result;
           const phone = (d.formatted_phone_number || '').replace(/\D/g, '');
           if (!phone || contacted.has(phone)) continue;
+          if ((d.user_ratings_total || 0) < MIN_REVIEWS) continue;
 
           leads.push({
             name:    d.name,
