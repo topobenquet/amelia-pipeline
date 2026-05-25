@@ -592,14 +592,19 @@ async function runPipeline() {
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
+const { startWebhookServer, sendDailySummary } = require('./webhook-server');
+
+// Always start webhook server (handles inbound SMS + health check)
+startWebhookServer();
+
 if (process.env.RUN_NOW === 'true') {
-  // Manual trigger: node pipeline-orchestrator.js (with RUN_NOW=true)
   runPipeline().catch(console.error);
 } else {
-  // Scheduled: runs daily at 9:00 AM UTC
   log('Pipeline scheduler started — waiting for 9:00 AM UTC...');
+  // Daily pipeline at 9:00 AM UTC
   cron.schedule('0 9 * * *', runPipeline, { timezone: 'UTC' });
+  // Daily summary at 9:30 AM UTC (after pipeline finishes)
+  cron.schedule('30 9 * * *', sendDailySummary, { timezone: 'UTC' });
 
-  // Keep process alive
   process.on('SIGTERM', () => { log('Received SIGTERM, shutting down'); process.exit(0); });
 }
