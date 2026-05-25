@@ -78,13 +78,42 @@ function getDriveClient() {
   return { drive: google.drive({ version: 'v3', auth }), auth };
 }
 
+const SHEET_HEADERS = [
+  'Date', 'Business Name', 'City', 'Phone', 'Email', 'Website',
+  'Rating', 'Reviews', 'SMS Status', 'Response Time', 'Revenue at Risk',
+  'Bucket', 'Audit Link', 'Instantly Status',
+];
+
+async function ensureSheetHeaders(sheets, sheetId) {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId, range: 'Sheet1!A1:N1',
+  });
+  const first = (res.data.values || [])[0];
+  if (!first || first[0] !== 'Date') {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: sheetId,
+      range: 'Sheet1!A1',
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [SHEET_HEADERS] },
+    });
+  }
+}
+
+async function getSheetClient() {
+  const { auth } = getDriveClient();
+  const sheets = google.sheets({ version: 'v4', auth });
+  const sheetId = process.env.GOOGLE_SHEETS_ID;
+  await ensureSheetHeaders(sheets, sheetId);
+  return { sheets, sheetId };
+}
+
 async function appendToSheet(rows) {
   const sheetId = process.env.GOOGLE_SHEETS_ID;
   if (!sheetId) return;
   try {
-    // Use service account auth (same credentials as Drive)
     const { auth } = getDriveClient();
     const sheets = google.sheets({ version: 'v4', auth });
+    await ensureSheetHeaders(sheets, sheetId);
     await sheets.spreadsheets.values.append({
       spreadsheetId: sheetId,
       range: 'Sheet1!A1',
@@ -407,7 +436,9 @@ async function phase1_processReadyBatches() {
           : entry.responseTimeHours <= 4 ? 'fast_reply' : 'slow_reply';
 
         const hours = entry.responseTimeHours;
-        const campaignId = await getOrCreateCampaign(bucket);
+        const responseTime = !hours ? 'over 24 hours' : hours < 1 ? `${Math.round(hours*60)} minutes` : `${Math.round(hours)} hours`;
+        const revenueLost  = !hours || hours > 8 ? '$51,840/yr' : hours > 4 ? '$38,400/yr' : '$24,000/yr';
+        const campaignId   = await getOrCreateCampaign(bucket);
         await pushLeadToInstantly(campaignId, {
           email:         entry.email,
           business_name: entry.name,
@@ -417,10 +448,22 @@ async function phase1_processReadyBatches() {
           ig_handle:     entry.instagram || '',
           rating:        entry.rating,
           reviews:       entry.reviews,
-          response_time: !hours ? 'over 24 hours' : hours < 1 ? `${Math.round(hours*60)} minutes` : `${Math.round(hours)} hours`,
-          revenue_lost:  !hours || hours > 8 ? '$51,840/yr' : hours > 4 ? '$38,400/yr' : '$24,000/yr',
+          response_time: responseTime,
+          revenue_lost:  revenueLost,
           audit_link:    driveLink,
         });
+
+        // Update Sheets row with results
+        await appendToSheet([[
+          new Date(entry.sentAt || batch.sentAt).toLocaleDateString('en-US'),
+          entry.name, entry.city, entry.phone, entry.email, entry.website || '',
+          entry.rating ? `${entry.rating}⭐` : '', entry.reviews || '',
+          entry.status === 'responded' ? 'Responded' : 'No Reply',
+          responseTime, revenueLost,
+          bucket === 'no_reply' ? 'A - No Reply' : bucket === 'slow_reply' ? 'B - Slow Reply' : 'C - Fast Reply',
+          driveLink, 'Added to Instantly',
+        ]]);
+
         processed++;
         log(`    ✅ ${entry.name} → ${bucket}`);
       } catch (e) {
@@ -489,10 +532,22 @@ async function phase2_scrapeAndSend() {
   saveContacted(contacted);
   log(`  Phase 2 done — ${smsSent} SMS sent`);
 
-  // Log to Google Sheets
+  // Log to Google Sheets — one row per lead, uniform columns
   const sheetRows = batch.leads.map(l => [
-    l.sentAt, l.name, l.city, l.phone, l.email || '', l.website || '',
-    l.rating || '', l.reviews || '', 'sms_sent', '',
+    new Date(l.sentAt).toLocaleDateString('en-US'),  // Date
+    l.name,                                           // Business Name
+    l.city,                                           // City
+    l.phone,                                          // Phone
+    l.email || '',                                    // Email
+    l.website || '',                                  // Website
+    l.rating ? `${l.rating}⭐` : '',                 // Rating
+    l.reviews || '',                                  // Reviews
+    'SMS Sent',                                       // SMS Status
+    '',                                               // Response Time (filled later)
+    '',                                               // Revenue at Risk (filled later)
+    '',                                               // Bucket (filled later)
+    '',                                               // Audit Link (filled later)
+    'Pending',                                        // Instantly Status
   ]);
   await appendToSheet(sheetRows);
   log(`  Logged ${sheetRows.length} rows to Sheets`);
