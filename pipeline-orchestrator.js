@@ -515,13 +515,25 @@ async function phase2_scrapeAndSend() {
     try {
       const contactId      = await getOrCreateContact(lead);
       const conversationId = await getOrCreateConversation(contactId);
-      await sendSMS(contactId, conversationId);
+      let smsStatus = 'pending';
+      try {
+        await sendSMS(contactId, conversationId);
+        smsSent++;
+        log(`  ✅ SMS → ${lead.name} (${lead.phone})`);
+      } catch (smsErr) {
+        const status = smsErr.response?.status;
+        if (status === 400) {
+          smsStatus = 'landline';
+          log(`  📵 Landline (no SMS) — ${lead.name} (${lead.phone})`);
+        } else {
+          smsStatus = 'failed';
+          log(`  ❌ SMS failed for ${lead.name}: ${smsErr.message}`);
+        }
+      }
       contacted.add(phone);
-      batch.leads.push({ ...lead, contactId, conversationId, sentAt: new Date().toISOString(), status: 'pending' });
-      smsSent++;
-      log(`  ✅ SMS → ${lead.name} (${lead.phone})`);
+      batch.leads.push({ ...lead, contactId, conversationId, sentAt: new Date().toISOString(), status: smsStatus });
     } catch (e) {
-      log(`  ❌ SMS failed for ${lead.name}: ${e.message}`);
+      log(`  ❌ Contact/conv failed for ${lead.name}: ${e.message}`);
     }
     await new Promise(r => setTimeout(r, 6000)); // GHL rate limit: 10/min
   }
@@ -533,21 +545,13 @@ async function phase2_scrapeAndSend() {
   log(`  Phase 2 done — ${smsSent} SMS sent`);
 
   // Log to Google Sheets — one row per lead, uniform columns
+  const statusLabel = { pending: 'SMS Sent', landline: 'Landline — No SMS', failed: 'Failed' };
   const sheetRows = batch.leads.map(l => [
-    new Date(l.sentAt).toLocaleDateString('en-US'),  // Date
-    l.name,                                           // Business Name
-    l.city,                                           // City
-    l.phone,                                          // Phone
-    l.email || '',                                    // Email
-    l.website || '',                                  // Website
-    l.rating ? `${l.rating}⭐` : '',                 // Rating
-    l.reviews || '',                                  // Reviews
-    'SMS Sent',                                       // SMS Status
-    '',                                               // Response Time (filled later)
-    '',                                               // Revenue at Risk (filled later)
-    '',                                               // Bucket (filled later)
-    '',                                               // Audit Link (filled later)
-    'Pending',                                        // Instantly Status
+    new Date(l.sentAt).toLocaleDateString('en-US'),
+    l.name, l.city, l.phone, l.email || '', l.website || '',
+    l.rating ? `${l.rating}⭐` : '', l.reviews || '',
+    statusLabel[l.status] || l.status,
+    '', '', '', '', l.status === 'pending' ? 'Awaiting response' : 'N/A — no SMS',
   ]);
   await appendToSheet(sheetRows);
   log(`  Logged ${sheetRows.length} rows to Sheets`);
