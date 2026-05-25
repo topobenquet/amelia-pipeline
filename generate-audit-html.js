@@ -8,9 +8,32 @@ function buildHTML(lead) {
     responseTimeHours, instagram,
   } = lead;
 
-  const noReply      = !responseTimeHours;
-  const revenueMonth = noReply || responseTimeHours > 8 ? '$4,320' : responseTimeHours > 4 ? '$3,200' : '$2,000';
-  const revenueYear  = noReply || responseTimeHours > 8 ? '$51,840' : responseTimeHours > 4 ? '$38,400' : '$24,000';
+  const noReply = !responseTimeHours;
+
+  // Estimate monthly inquiry volume from review count (proxy for practice size)
+  const reviewCount = Number(googleReviews) || 0;
+  const baseInquiries = reviewCount >= 200 ? 45
+    : reviewCount >= 100 ? 32
+    : reviewCount >= 50  ? 22
+    : reviewCount >= 20  ? 16
+    : 12;
+
+  // Loss rate by response time
+  const lossRate = noReply ? 0.85
+    : responseTimeHours > 8  ? 0.70
+    : responseTimeHours > 4  ? 0.50
+    : responseTimeHours > 1  ? 0.30
+    : 0.10;
+
+  const leadsLost    = Math.max(1, Math.round(baseInquiries * lossRate));
+  const LTV          = 1200;
+  const CLOSE_RATE   = 0.30;
+  const revMonthRaw  = leadsLost * LTV * CLOSE_RATE;
+  const revYearRaw   = revMonthRaw * 12;
+
+  function fmt(n) { return '$' + n.toLocaleString('en-US'); }
+  const revenueMonth = fmt(revMonthRaw);
+  const revenueYear  = fmt(revYearRaw);
   const date         = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
   const stars = Math.round(googleRating || 0);
@@ -55,8 +78,7 @@ function buildHTML(lead) {
   .header-meta { display:flex; gap:20px; align-items:center; font-size:12px; color:#94A3B8; flex-wrap:wrap; }
   .header-meta span { display:flex; align-items:center; gap:5px; }
   .google-badge { position:absolute; top:32px; right:36px; background:#fff; border-radius:12px; padding:12px 16px; text-align:center; min-width:110px; box-shadow:0 4px 20px rgba(0,0,0,0.3); }
-  .google-badge .g-logo { font-size:13px; font-weight:800; margin-bottom:4px; }
-  .google-badge .g-logo span { color:#4285F4; }
+  .google-badge .g-logo { font-size:13px; font-weight:800; margin-bottom:4px; letter-spacing:-0.3px; }
   .google-badge .g-score { font-size:28px; font-weight:900; color:#0A0B1A; line-height:1; }
   .google-badge .g-stars { font-size:16px; margin:2px 0; }
   .google-badge .g-reviews { font-size:10px; color:#6B7280; }
@@ -66,10 +88,10 @@ function buildHTML(lead) {
 
   /* ── RESPONSE CARD ── */
   .response-card { background:#fff; border-radius:14px; padding:22px 24px; display:flex; gap:20px; align-items:center; box-shadow:0 1px 4px rgba(0,0,0,0.08); border:1px solid #E5E7EB; }
-  .badge-no-reply { background:#FEF2F2; border:2px solid #FCA5A5; border-radius:50%; width:80px; height:80px; flex-shrink:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
-  .badge-no-reply .x-icon { font-size:22px; color:#DC2626; font-weight:900; }
-  .badge-no-reply .badge-label { font-size:9px; font-weight:800; color:#DC2626; letter-spacing:1px; text-align:center; line-height:1.2; margin-top:2px; }
-  .badge-time { font-size:9px; color:#6B7280; margin-top:1px; }
+  .badge-no-reply { background:#FEF2F2; border:2px solid #FCA5A5; border-radius:50%; width:86px; height:86px; flex-shrink:0; display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; }
+  .badge-no-reply .x-icon { font-size:20px; color:#DC2626; font-weight:900; line-height:1; }
+  .badge-no-reply .badge-label { font-size:10px; font-weight:900; color:#DC2626; letter-spacing:1.5px; text-align:center; line-height:1.15; margin-top:3px; text-transform:uppercase; }
+  .badge-no-reply .badge-time { font-size:8px; color:#DC2626; opacity:0.65; margin-top:2px; text-align:center; white-space:nowrap; }
   .response-text h3 { font-size:16px; font-weight:800; color:#0A0B1A; margin-bottom:6px; }
   .response-text p { font-size:12.5px; color:#4B5563; line-height:1.6; }
   .response-text .highlight { color:#DC2626; font-weight:700; }
@@ -77,9 +99,9 @@ function buildHTML(lead) {
 
   /* ── TIMELINE ── */
   .timeline-card { background:#fff; border-radius:14px; padding:20px 24px; box-shadow:0 1px 4px rgba(0,0,0,0.08); border:1px solid #E5E7EB; }
-  .timeline-track { display:flex; align-items:center; position:relative; margin-top:8px; }
-  .timeline-line { position:absolute; top:13px; left:0; right:0; height:3px; background:linear-gradient(to right,#16A34A,#D97706,#DC2626); border-radius:2px; z-index:0; }
-  .timeline-points { display:flex; justify-content:space-between; width:100%; position:relative; z-index:1; }
+  .timeline-track { display:flex; align-items:flex-start; position:relative; margin-top:8px; }
+  .timeline-line { position:absolute; top:9px; left:0; right:0; height:3px; background:linear-gradient(to right,#16A34A,#D97706,#DC2626); border-radius:2px; z-index:0; }
+  .timeline-points { display:flex; justify-content:space-between; width:100%; position:relative; z-index:1; align-items:flex-start; }
   .t-point { display:flex; flex-direction:column; align-items:center; gap:6px; }
   .t-dot { width:18px; height:18px; border-radius:50%; background:#fff; border:2.5px solid #D1D5DB; }
   .t-dot.active { background:#DC2626; border-color:#DC2626; width:20px; height:20px; box-shadow:0 0 0 4px rgba(220,38,38,0.15); }
@@ -177,7 +199,7 @@ function buildHTML(lead) {
   </div>
   ${googleRating ? `
   <div class="google-badge">
-    <div class="g-logo"><span>G</span>oogle</div>
+    <div class="g-logo"><span style="color:#4285F4">G</span><span style="color:#EA4335">o</span><span style="color:#FBBC05">o</span><span style="color:#4285F4">g</span><span style="color:#34A853">l</span><span style="color:#EA4335">e</span></div>
     <div class="g-score">${googleRating}</div>
     <div class="g-stars">${starsHTML}</div>
     <div class="g-reviews">${googleReviews || 0} reviews</div>
@@ -191,7 +213,7 @@ function buildHTML(lead) {
     <div class="badge-no-reply">
       <div class="x-icon">✕</div>
       <div class="badge-label">NO<br>REPLY</div>
-      <div class="badge-time">within 24 hrs</div>
+      <div class="badge-time">24h+</div>
     </div>
     <div class="response-text">
       <h3>This business never responded.</h3>
@@ -220,7 +242,7 @@ function buildHTML(lead) {
   <div class="stats-grid">
     <div class="stat-card red">
       <div class="stat-icon">👤</div>
-      <div class="stat-value">~12</div>
+      <div class="stat-value">~${leadsLost}</div>
       <div class="stat-label">Leads Lost / Month</div>
       <div class="stat-sub">Est. unanswered inquiries</div>
     </div>
@@ -256,7 +278,7 @@ function buildHTML(lead) {
       <div class="rev-item">
         <div class="rev-item-icon">💬</div>
         <div class="rev-item-label">Unanswered / mo</div>
-        <div class="rev-item-val">~12 leads</div>
+        <div class="rev-item-val">~${leadsLost} leads</div>
       </div>
       <div class="rev-item">
         <div class="rev-item-icon">🎯</div>
@@ -316,8 +338,8 @@ function buildHTML(lead) {
     <div class="cta-right">
       <div class="cta-tagline">See Amelia handle your next patient inquiry — live.</div>
       <div class="cta-features">White-glove onboarding &nbsp;•&nbsp; Month-to-month &nbsp;•&nbsp; Cancel anytime &nbsp;•&nbsp; Live in 48 hours</div>
-      <a class="cta-btn" href="https://clinics.amelia.im/schedule">Book Your Free Demo &nbsp;→</a>
-      <div class="cta-url">🌐 clinics.amelia.im/schedule</div>
+      <a class="cta-btn" href="https://clinics.amelia.im/demo">Book Your Free Demo &nbsp;→</a>
+      <div class="cta-url">🌐 clinics.amelia.im/demo</div>
     </div>
   </div>
 

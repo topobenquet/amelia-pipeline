@@ -12,7 +12,7 @@ const STATE_FILE      = path.join(__dirname, 'pipeline-state.json');
 const AUDITS_DIR      = path.join(__dirname, 'audits');
 const CONTACTED_FILE  = path.join(__dirname, 'contacted-phones.json');
 const DRIVE_FOLDER    = 'Amelia Audits';
-const BOOKING_URL     = 'https://clinics.amelia.im/schedule';
+const BOOKING_URL     = 'https://clinics.amelia.im/demo';
 
 // Cities to rotate through (add more to increase reach)
 const CITIES = [
@@ -181,7 +181,7 @@ async function getOrCreateContact(lead) {
     phone:      lead.phone,
     email:      lead.email || undefined,
     website:    lead.website || undefined,
-    tags:       ['medspa-lead', 'audit-prospect', lead.city.split(',')[0].trim()],
+    tags:       [`${process.env.NICHE || 'medspa'}-lead`, 'audit-prospect', lead.city.split(',')[0].trim()],
   }, { headers: GHL_H });
 
   const id = createRes.data?.contact?.id;
@@ -463,7 +463,9 @@ async function phase1_processReadyBatches() {
 
         const hours = entry.responseTimeHours;
         const responseTime = !hours ? 'over 24 hours' : hours < 1 ? `${Math.round(hours*60)} minutes` : `${Math.round(hours)} hours`;
-        const revenueLost  = !hours || hours > 8 ? '$51,840/yr' : hours > 4 ? '$38,400/yr' : '$24,000/yr';
+        const baseInq  = (entry.reviews||0) >= 200 ? 45 : (entry.reviews||0) >= 100 ? 32 : (entry.reviews||0) >= 50 ? 22 : (entry.reviews||0) >= 20 ? 16 : 12;
+        const lossRate = !hours ? 0.85 : hours > 8 ? 0.70 : hours > 4 ? 0.50 : hours > 1 ? 0.30 : 0.10;
+        const revenueLost  = '$' + (Math.max(1, Math.round(baseInq * lossRate)) * 1200 * 0.30 * 12).toLocaleString('en-US') + '/yr';
         const campaignId   = await getOrCreateCampaign(bucket);
         await pushLeadToInstantly(campaignId, {
           email:         entry.email,

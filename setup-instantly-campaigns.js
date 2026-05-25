@@ -401,7 +401,13 @@ async function main() {
       rating:        String(match.rating || entry.lead.rating || ''),
       reviews:       String(match.reviews || entry.lead.reviews || ''),
       response_time: formatHours(hours),
-      revenue_lost:  !hours || hours > 8 ? '$51,840/yr' : hours > 4 ? '$38,400/yr' : '$24,000/yr',
+      revenue_lost:  (function() {
+        const r = Number(match.reviews || entry.lead.reviews) || 0;
+        const base = r >= 200 ? 45 : r >= 100 ? 32 : r >= 50 ? 22 : r >= 20 ? 16 : 12;
+        const rate = !hours ? 0.85 : hours > 8 ? 0.70 : hours > 4 ? 0.50 : hours > 1 ? 0.30 : 0.10;
+        const yearly = Math.round(base * rate) * 1200 * 0.30 * 12;
+        return '$' + yearly.toLocaleString('en-US') + '/yr';
+      })(),
       audit_link:    AUDIT_LINK_BASE + slug,
     });
   }
