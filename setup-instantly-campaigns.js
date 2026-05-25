@@ -71,6 +71,42 @@ If the timing is ever right: clinics.amelia.im/widget/booking/amelia-sales-call
 Rooting for you,
 Juan`,
       delay: 5
+    },
+    {
+      subject: 'checking in — {{business_name}}',
+      body: `Hi,
+
+A few weeks ago I sent over an audit showing that {{business_name}} wasn't responding to new patient inquiries — and estimated around {{revenue_lost}} in revenue at risk each year.
+
+Things change. Maybe the timing is better now.
+
+We've activated Amelia for several med spas in {{city}} in the last month. Average time to first booking through the bot: 6 hours after going live.
+
+Two plans available now:
+· Starter — $497/mo · SMS + chat · 150 conversations/month
+· Pro — $997/mo · SMS + voice + chat · 400 conversations/month
+
+No contracts. Live in 48 hours. 30-day money-back guarantee.
+
+If you want to see it working: clinics.amelia.im/widget/booking/amelia-sales-call
+
+Juan`,
+      delay: 30
+    },
+    {
+      subject: 'one last thing — {{business_name}}',
+      body: `Hi,
+
+Still here if the timing ever works out.
+
+Quick update: we just added a Starter plan at $497/month — SMS and chat only, 150 conversations included. A lot of {{city}} med spas start here to test the waters, then upgrade once they see bookings coming in automatically.
+
+No pressure. No contracts.
+
+clinics.amelia.im/widget/booking/amelia-sales-call
+
+Juan`,
+      delay: 60
     }
   ],
 
@@ -123,6 +159,38 @@ clinics.amelia.im/widget/booking/amelia-sales-call
 
 Juan`,
       delay: 5
+    },
+    {
+      subject: 'checking in — {{business_name}}',
+      body: `Hi,
+
+A few weeks ago I shared an audit for {{business_name}}. You responded to our test in {{response_time}} — better than most — but after-hours and weekend gaps are still costing you leads.
+
+Two plans now available:
+· Starter — $497/mo · SMS + chat · 150 conversations/month
+· Pro — $997/mo · SMS + voice + chat · 400 conversations/month
+
+No contracts. Live in 48 hours. 30-day money-back guarantee.
+
+Worth 15 minutes? clinics.amelia.im/widget/booking/amelia-sales-call
+
+Juan`,
+      delay: 30
+    },
+    {
+      subject: 'still here — {{business_name}}',
+      body: `Hi,
+
+Last check-in.
+
+You're already responding faster than most med spas in {{city}}. Amelia just covers the gaps you can't — nights, weekends, peak hours.
+
+Starter plan: $497/month. No contracts.
+
+clinics.amelia.im/widget/booking/amelia-sales-call
+
+Juan`,
+      delay: 60
     }
   ],
 
@@ -174,6 +242,38 @@ Keep doing what you're doing.
 
 Juan`,
       delay: 5
+    },
+    {
+      subject: 'checking in — {{business_name}}',
+      body: `Hi,
+
+A month ago I shared an audit for {{business_name}} — you were one of the faster-responding practices we tested in {{city}}.
+
+Just wanted to check in. We now have two plans:
+· Starter — $497/mo · SMS + chat · 150 conversations/month
+· Pro — $997/mo · SMS + voice + chat · 400 conversations/month
+
+No contracts. Live in 48 hours. 30-day money-back guarantee.
+
+If the timing works: clinics.amelia.im/widget/booking/amelia-sales-call
+
+Juan`,
+      delay: 30
+    },
+    {
+      subject: 'last one — {{business_name}}',
+      body: `Hi,
+
+Final note.
+
+You responded faster than 80% of med spas we tested in {{city}}. Amelia just closes the last gap — the hours when your team isn't available.
+
+$497/month to start. Cancel anytime.
+
+clinics.amelia.im/widget/booking/amelia-sales-call
+
+Juan`,
+      delay: 60
     }
   ]
 };

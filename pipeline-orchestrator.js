@@ -444,9 +444,9 @@ async function phase2_scrapeAndSend() {
   const state     = loadState();
   const contacted = loadContacted();
 
-  // Pick next city
-  const city  = CITIES[state.cityIndex % CITIES.length];
-  state.cityIndex = (state.cityIndex + 1) % CITIES.length;
+  // Pick next city (CITY_OVERRIDE forces a specific city for testing)
+  const city = process.env.CITY_OVERRIDE || CITIES[state.cityIndex % CITIES.length];
+  if (!process.env.CITY_OVERRIDE) state.cityIndex = (state.cityIndex + 1) % CITIES.length;
   log(`  City: ${city}`);
 
   const rawLeads = await scrapeLeads(city, LEADS_PER_DAY, contacted);
