@@ -492,50 +492,64 @@ async function phase2_scrapeAndSend() {
   if (!process.env.CITY_OVERRIDE) state.cityIndex = (state.cityIndex + 1) % CITIES.length;
   log(`  City: ${city}`);
 
-  const rawLeads = await scrapeLeads(city, LEADS_PER_DAY, contacted);
-  log(`  Scraped ${rawLeads.length} new leads`);
-
-  if (!rawLeads.length) { log('  No new leads found, skipping'); saveState(state); return; }
-
-  // Scrape emails
-  for (const lead of rawLeads) {
-    lead.email = await scrapeEmail(lead.website);
-    await new Promise(r => setTimeout(r, 200));
-  }
-  const withEmail = rawLeads.filter(l => l.email).length;
-  log(`  Emails found: ${withEmail}/${rawLeads.length}`);
-
-  // Push contacts + send SMS
   const today   = new Date().toISOString().split('T')[0];
   const batch   = { date: today, sentAt: new Date().toISOString(), status: 'sms_sent', leads: [], city };
   let   smsSent = 0;
+  const MAX_ATTEMPTS = LEADS_PER_DAY * 4; // safety cap to avoid infinite loop
+  let   attempts = 0;
+  let   fetchSize = Math.ceil(LEADS_PER_DAY * 1.8); // fetch extra to account for landlines
 
-  for (const lead of rawLeads) {
-    const phone = lead.phone.replace(/\D/g, '');
-    try {
-      const contactId      = await getOrCreateContact(lead);
-      const conversationId = await getOrCreateConversation(contactId);
-      let smsStatus = 'pending';
-      try {
-        await sendSMS(contactId, conversationId);
-        smsSent++;
-        log(`  ✅ SMS → ${lead.name} (${lead.phone})`);
-      } catch (smsErr) {
-        const status = smsErr.response?.status;
-        if (status === 400) {
-          smsStatus = 'landline';
-          log(`  📵 Landline (no SMS) — ${lead.name} (${lead.phone})`);
-        } else {
-          smsStatus = 'failed';
-          log(`  ❌ SMS failed for ${lead.name}: ${smsErr.message}`);
-        }
-      }
-      contacted.add(phone);
-      batch.leads.push({ ...lead, contactId, conversationId, sentAt: new Date().toISOString(), status: smsStatus });
-    } catch (e) {
-      log(`  ❌ Contact/conv failed for ${lead.name}: ${e.message}`);
+  while (smsSent < LEADS_PER_DAY && attempts < MAX_ATTEMPTS) {
+    const needed  = LEADS_PER_DAY - smsSent;
+    const toFetch = Math.max(needed, fetchSize);
+    log(`  Fetching ${toFetch} leads (${smsSent}/${LEADS_PER_DAY} SMS sent so far)...`);
+
+    const rawLeads = await scrapeLeads(city, toFetch, contacted);
+    if (!rawLeads.length) { log('  No more new leads available in this city'); break; }
+
+    // Scrape emails
+    for (const lead of rawLeads) {
+      lead.email = await scrapeEmail(lead.website);
+      await new Promise(r => setTimeout(r, 200));
     }
-    await new Promise(r => setTimeout(r, 6000)); // GHL rate limit: 10/min
+    log(`  Emails found: ${rawLeads.filter(l => l.email).length}/${rawLeads.length}`);
+
+    for (const lead of rawLeads) {
+      if (smsSent >= LEADS_PER_DAY) break;
+      attempts++;
+      const phone = lead.phone.replace(/\D/g, '');
+
+      // Mark as contacted immediately so next scrape batch skips it
+      contacted.add(phone);
+
+      try {
+        const contactId      = await getOrCreateContact(lead);
+        const conversationId = await getOrCreateConversation(contactId);
+        let smsStatus = 'pending';
+        try {
+          await sendSMS(contactId, conversationId);
+          smsSent++;
+          smsStatus = 'pending';
+          log(`  ✅ SMS → ${lead.name} (${lead.phone}) [${smsSent}/${LEADS_PER_DAY}]`);
+        } catch (smsErr) {
+          if (smsErr.response?.status === 400) {
+            smsStatus = 'landline';
+            log(`  📵 Landline — ${lead.name} (${lead.phone})`);
+          } else {
+            smsStatus = 'failed';
+            log(`  ❌ SMS error for ${lead.name}: ${smsErr.message}`);
+          }
+        }
+        batch.leads.push({ ...lead, contactId, conversationId, sentAt: new Date().toISOString(), status: smsStatus });
+      } catch (e) {
+        log(`  ❌ Contact/conv failed for ${lead.name}: ${e.message}`);
+      }
+      await new Promise(r => setTimeout(r, 6000)); // GHL rate limit: 10/min
+    }
+
+    // Save progress after each batch so we don't lose data if process stops
+    saveContacted(contacted);
+    fetchSize = Math.ceil(needed * 2); // next round fetch 2x what we still need
   }
 
   batch.smsSent = smsSent;
