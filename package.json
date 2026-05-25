@@ -15,6 +15,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@sparticuz/chromium-min": "^148.0.0",
     "axios": "^1.16.1",
     "cheerio": "^1.2.0",
     "dotenv": "^17.4.2",
@@ -25,6 +26,8 @@
     "node-cron": "^4.2.1",
     "open": "^11.0.0",
     "openai": "^6.37.0",
-    "pdfkit": "^0.18.0"
+    "pdfkit": "^0.18.0",
+    "puppeteer": "^25.0.4",
+    "puppeteer-core": "^25.0.4"
   }
 }

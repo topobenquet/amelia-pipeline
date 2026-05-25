@@ -399,7 +399,7 @@ async function scrapeEmail(websiteUrl) {
 // ─── PDF generation (inline, avoids circular imports) ─────────────────────────
 async function generateAndUploadPDF(lead, drive, folderId) {
   // Delegate to generate-and-upload-audits.js generatePDF function
-  const { generatePDF } = require('./generate-and-upload-audits-lib.js');
+  const { generatePDF } = require('./generate-audit-html.js');
   const slug    = lead.name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
   const pdfPath = path.join(AUDITS_DIR, `${slug}.pdf`);
   fs.mkdirSync(AUDITS_DIR, { recursive: true });
