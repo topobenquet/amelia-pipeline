@@ -207,13 +207,17 @@ async function getOrCreateConversation(contactId) {
   return id;
 }
 
+const SMS_MESSAGES = {
+  medspa: 'Hi there! Saw your med spa online and wanted to ask about pricing for Botox. Do you have a menu or consult I could book?',
+  chiro:  'Hi! I found your chiropractic office online and wanted to ask about pricing for a new patient consultation. Do you have availability this week?',
+  dental: 'Hi! I came across your dental office online and wanted to ask about pricing for a cleaning and checkup. Are you accepting new patients?',
+};
+
 async function sendSMS(contactId, conversationId) {
-  // contactId is required in GHL V2 message payload
+  const niche   = process.env.NICHE || 'medspa';
+  const message = SMS_MESSAGES[niche] || SMS_MESSAGES['medspa'];
   const res = await axios.post(`${GHL_BASE}/conversations/messages`, {
-    type:           'SMS',
-    contactId,
-    conversationId,
-    message:        'Hi there! Saw your med spa online and wanted to ask about pricing for Botox. Do you have a menu or consult I could book?',
+    type: 'SMS', contactId, conversationId, message,
   }, { headers: GHL_H });
   return res.data?.messageId || res.data?.id;
 }
@@ -306,7 +310,13 @@ async function pushLeadToInstantly(campaignId, lead) {
 // ─── Google Maps scrape ───────────────────────────────────────────────────────
 async function scrapeLeads(city, count, contacted) {
   const MAPS_KEY = process.env.GOOGLE_MAPS_API_KEY;
-  const queries  = ['med spa', 'medical spa', 'medspa', 'aesthetic clinic', 'botox clinic'];
+  const NICHE    = process.env.NICHE || 'medspa';
+  const NICHE_QUERIES = {
+    medspa:        ['med spa', 'medical spa', 'medspa', 'aesthetic clinic', 'botox clinic'],
+    chiro:         ['chiropractor', 'chiropractic clinic', 'chiropractic office', 'back pain clinic', 'spine clinic'],
+    dental:        ['dental clinic', 'dentist office', 'cosmetic dentist', 'dental spa', 'orthodontist'],
+  };
+  const queries = NICHE_QUERIES[NICHE] || NICHE_QUERIES['medspa'];
   const leads    = [];
   const seen     = new Set();
 
