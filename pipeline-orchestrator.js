@@ -367,17 +367,33 @@ async function scrapeLeads(city, count, contacted) {
   return leads;
 }
 
-// Try to scrape email from website
+const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
+const EMAIL_BLACKLIST = ['example', 'sentry', 'wix.com', 'squarespace', 'wordpress', '@2x', 'png', 'jpg', 'svg', 'domain'];
+
+function extractEmail(html) {
+  const matches = html.match(EMAIL_REGEX) || [];
+  return matches.find(e => !EMAIL_BLACKLIST.some(b => e.toLowerCase().includes(b))) || null;
+}
+
+// Try to scrape email from website — checks homepage + /contact + /about
 async function scrapeEmail(websiteUrl) {
   if (!websiteUrl) return null;
-  try {
-    const base = websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
-    const res = await axios.get(base, { timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0' } });
-    const match = res.data.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
-    const email = match ? match[0] : null;
-    if (email && email.includes('example')) return null;
-    return email;
-  } catch { return null; }
+  const base = websiteUrl.startsWith('http') ? websiteUrl.replace(/\/$/, '') : `https://${websiteUrl}`;
+  const pages = [base, `${base}/contact`, `${base}/contact-us`, `${base}/about`];
+
+  for (const url of pages) {
+    try {
+      const res = await axios.get(url, {
+        timeout: 6000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
+        maxRedirects: 3,
+      });
+      const email = extractEmail(res.data);
+      if (email) return email;
+    } catch { /* try next page */ }
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return null;
 }
 
 // ─── PDF generation (inline, avoids circular imports) ─────────────────────────
