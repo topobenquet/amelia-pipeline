@@ -72,7 +72,7 @@ function buildSignatureHTML(niche) {
           style="font-size:11px;color:#6B7280;text-decoration:none;">🌐 clinics.amelia.im</a>
       </div>
       <div style="margin-top:10px;">
-        <img src="${ASSETS_URL}/amelia-logo.webp" height="28" alt="Amelia AI" style="display:block;">
+        <img src="${ASSETS_URL}/amelia-logo.png" height="28" alt="Amelia AI" style="display:block;">
       </div>
     </td>
   </tr>
