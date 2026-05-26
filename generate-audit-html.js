@@ -1,4 +1,5 @@
-const puppeteer = require('puppeteer');
+const isRailway  = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RAILWAY_SERVICE_NAME;
+const puppeteer  = isRailway ? require('puppeteer-core') : require('puppeteer');
 const fs        = require('fs');
 const path      = require('path');
 
@@ -355,8 +356,20 @@ function buildHTML(lead) {
 }
 
 async function generatePDF(lead, outputPath) {
-  const html    = buildHTML(lead);
-  const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox','--disable-setuid-sandbox'] });
+  const html = buildHTML(lead);
+
+  let launchOptions;
+  if (isRailway) {
+    const chromium = require('@sparticuz/chromium-min');
+    const executablePath = await chromium.executablePath(
+      'https://github.com/Sparticuz/chromium/releases/download/v148.0.0/chromium-v148.0.0-pack.tar'
+    );
+    launchOptions = { executablePath, args: chromium.args, headless: chromium.headless, defaultViewport: chromium.defaultViewport };
+  } else {
+    launchOptions = { headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] };
+  }
+
+  const browser = await puppeteer.launch(launchOptions);
   const page    = await browser.newPage();
   await page.setContent(html, { waitUntil: 'networkidle0' });
   await page.emulateMediaType('screen');
