@@ -105,6 +105,9 @@ async function logInterestToSheet(contactId, replyText) {
   }
 }
 
+// ─── Static assets (signature images) ────────────────────────────────────────
+app.use(express.static(path.join(__dirname, 'public')));
+
 // ─── GHL Webhook endpoint ──────────────────────────────────────────────────────
 app.use(express.json());
 

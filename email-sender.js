@@ -46,22 +46,75 @@ function buildVars(lead) {
   };
 }
 
+const BASE_URL = process.env.RAILWAY_PUBLIC_DOMAIN
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+  : 'https://amelia-pipeline-production.up.railway.app';
+
+function buildSignatureHTML(niche) {
+  const title = niche === 'chiro' ? 'AI Receptionist for Chiropractic Offices'
+    : niche === 'dental' ? 'AI Receptionist for Dental Offices'
+    : 'AI Receptionist for Med Spas';
+
+  return `
+<table cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,sans-serif;font-size:13px;color:#1a1a1a;margin-top:24px;padding-top:16px;border-top:2px solid #7C3AED;">
+  <tr>
+    <td style="padding-right:16px;vertical-align:top;">
+      <img src="${BASE_URL}/juan.jpg" width="64" height="64"
+        style="border-radius:50%;display:block;object-fit:cover;" alt="Juan Benquet">
+    </td>
+    <td style="vertical-align:top;">
+      <div style="font-weight:700;font-size:15px;color:#0A0B1A;">Juan Benquet</div>
+      <div style="font-size:12px;color:#7C3AED;font-weight:600;margin-top:2px;">Founder &amp; CEO · Amelia AI</div>
+      <div style="font-size:11px;color:#6B7280;margin-top:4px;">${title}</div>
+      <div style="margin-top:8px;display:flex;gap:12px;">
+        <a href="https://clinics.amelia.im/demo"
+          style="font-size:11px;color:#7C3AED;text-decoration:none;font-weight:600;">📅 Book a demo</a>
+        &nbsp;&nbsp;
+        <a href="https://clinics.amelia.im"
+          style="font-size:11px;color:#6B7280;text-decoration:none;">🌐 clinics.amelia.im</a>
+      </div>
+      <div style="margin-top:10px;">
+        <img src="${BASE_URL}/amelia-logo.webp" height="28" alt="Amelia AI" style="display:block;">
+      </div>
+    </td>
+  </tr>
+</table>`;
+}
+
 async function sendSequenceEmail(lead, step) {
   const bucket   = lead.bucket || 'no_reply';
   const sequence = getSequences()[bucket];
   if (!sequence || step >= sequence.length) return false;
 
-  const email  = sequence[step];
-  const vars   = buildVars(lead);
+  const email   = sequence[step];
+  const vars    = buildVars(lead);
   const subject = fillTemplate(email.subject, vars);
   const text    = fillTemplate(email.body, vars);
+  const niche   = process.env.NICHE || 'medspa';
+
+  // Convert plain text to HTML paragraphs + append signature
+  const bodyHtml = text
+    .split(/\n\n+/)
+    .map(p => `<p style="margin:0 0 14px;line-height:1.6;">${p.replace(/\n/g, '<br>')}</p>`)
+    .join('');
+
+  const html = `
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:24px 0;background:#fff;font-family:Arial,sans-serif;font-size:14px;color:#1a1a1a;max-width:600px;">
+  <div style="padding:0 24px;">
+    ${bodyHtml}
+    ${buildSignatureHTML(niche)}
+  </div>
+</body></html>`;
 
   const transport = getTransport();
   await transport.sendMail({
     from:    `"${FROM_NAME}" <${FROM_EMAIL}>`,
     to:      lead.email,
     subject,
-    text,
+    text,   // plain text fallback
+    html,   // HTML with signature
   });
 
   return true;
