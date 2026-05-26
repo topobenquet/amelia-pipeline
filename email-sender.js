@@ -46,9 +46,7 @@ function buildVars(lead) {
   };
 }
 
-const BASE_URL = process.env.RAILWAY_PUBLIC_DOMAIN
-  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-  : 'https://amelia-pipeline-production.up.railway.app';
+const ASSETS_URL = 'https://raw.githubusercontent.com/topobenquet/amelia-pipeline/main/public';
 
 function buildSignatureHTML(niche) {
   const title = niche === 'chiro' ? 'AI Receptionist for Chiropractic Offices'
@@ -59,7 +57,7 @@ function buildSignatureHTML(niche) {
 <table cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,sans-serif;font-size:13px;color:#1a1a1a;margin-top:24px;padding-top:16px;border-top:2px solid #7C3AED;">
   <tr>
     <td style="padding-right:16px;vertical-align:top;">
-      <img src="${BASE_URL}/juan.jpg" width="64" height="64"
+      <img src="${ASSETS_URL}/juan.jpg" width="64" height="64"
         style="border-radius:50%;display:block;object-fit:cover;" alt="Juan Benquet">
     </td>
     <td style="vertical-align:top;">
@@ -74,7 +72,7 @@ function buildSignatureHTML(niche) {
           style="font-size:11px;color:#6B7280;text-decoration:none;">🌐 clinics.amelia.im</a>
       </div>
       <div style="margin-top:10px;">
-        <img src="${BASE_URL}/amelia-logo.webp" height="28" alt="Amelia AI" style="display:block;">
+        <img src="${ASSETS_URL}/amelia-logo.webp" height="28" alt="Amelia AI" style="display:block;">
       </div>
     </td>
   </tr>
