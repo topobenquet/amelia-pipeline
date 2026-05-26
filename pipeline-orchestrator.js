@@ -244,68 +244,8 @@ async function checkResponses(entries) {
   return entries;
 }
 
-// ─── Instantly helpers ─────────────────────────────────────────────────────────
-const INSTANTLY_BASE = 'https://api.instantly.ai/api/v2';
-const INSTANTLY_H    = {
-  Authorization: `Bearer ${process.env.INSTANTLY_API_KEY}`,
-  'Content-Type': 'application/json',
-};
-
-const CAMPAIGN_NAMES = {
-  no_reply:   'Amelia Audit — A: No Reply',
-  slow_reply: 'Amelia Audit — B: Slow Reply (4–24h)',
-  fast_reply: 'Amelia Audit — C: Fast Reply (<4h)',
-};
-
-async function getOrCreateCampaign(bucket) {
-  const res = await axios.get(`${INSTANTLY_BASE}/campaigns`, {
-    headers: INSTANTLY_H, params: { limit: 50 },
-  });
-  const found = res.data?.items?.find(c => c.name === CAMPAIGN_NAMES[bucket]);
-  if (found) return found.id;
-
-  // Create with sequences
-  const { SEQUENCES } = require('./setup-instantly-campaigns.js');
-  const steps = SEQUENCES[bucket].map(e => ({
-    type: 'email', delay: e.delay, delay_unit: 'days',
-    variants: [{ subject: e.subject, body: e.body }],
-  }));
-  const camp = await axios.post(`${INSTANTLY_BASE}/campaigns`, {
-    name: CAMPAIGN_NAMES[bucket],
-    campaign_schedule: {
-      schedules: [{ name: 'Weekdays', timing: { from: '00:00', to: '23:59' },
-        days: { 0: false, 1: true, 2: true, 3: true, 4: true, 5: true, 6: false },
-        timezone: 'Etc/GMT+12' }],
-    },
-    sequences: [{ steps }],
-    daily_limit: 50,
-    stop_on_reply: true,
-    open_tracking: true,
-    prioritize_new_leads: true,
-  }, { headers: INSTANTLY_H });
-  return camp.data.id;
-}
-
-async function pushLeadToInstantly(campaignId, lead) {
-  await axios.post(`${INSTANTLY_BASE}/leads`, {
-    campaign_id:  campaignId,
-    email:        lead.email,
-    company_name: lead.business_name,
-    website:      lead.website,
-    variables: {
-      business_name: lead.business_name,
-      city:          lead.city,
-      phone:         lead.phone,
-      website:       lead.website,
-      ig_handle:     lead.ig_handle || '',
-      rating:        String(lead.rating || ''),
-      reviews:       String(lead.reviews || ''),
-      response_time: lead.response_time,
-      revenue_lost:  lead.revenue_lost,
-      audit_link:    lead.audit_link,
-    },
-  }, { headers: INSTANTLY_H });
-}
+// ─── Email sequence (Gmail SMTP) ──────────────────────────────────────────────
+const { sendSequenceEmail, nextSendDate, isDue } = require('./email-sender.js');
 
 // ─── Google Maps scrape ───────────────────────────────────────────────────────
 async function scrapeLeads(city, count, contacted) {
@@ -465,21 +405,21 @@ async function phase1_processReadyBatches() {
         const responseTime = !hours ? 'over 24 hours' : hours < 1 ? `${Math.round(hours*60)} minutes` : `${Math.round(hours)} hours`;
         const baseInq  = (entry.reviews||0) >= 200 ? 45 : (entry.reviews||0) >= 100 ? 32 : (entry.reviews||0) >= 50 ? 22 : (entry.reviews||0) >= 20 ? 16 : 12;
         const lossRate = !hours ? 0.85 : hours > 8 ? 0.70 : hours > 4 ? 0.50 : hours > 1 ? 0.30 : 0.10;
-        const revenueLost  = '$' + (Math.max(1, Math.round(baseInq * lossRate)) * 1200 * 0.30 * 12).toLocaleString('en-US') + '/yr';
-        const campaignId   = await getOrCreateCampaign(bucket);
-        await pushLeadToInstantly(campaignId, {
-          email:         entry.email,
-          business_name: entry.name,
-          city:          entry.city,
-          phone:         entry.phone,
-          website:       entry.website,
-          ig_handle:     entry.instagram || '',
-          rating:        entry.rating,
-          reviews:       entry.reviews,
-          response_time: responseTime,
-          revenue_lost:  revenueLost,
-          audit_link:    driveLink,
-        });
+        const revenueLost = '$' + (Math.max(1, Math.round(baseInq * lossRate)) * 1200 * 0.30 * 12).toLocaleString('en-US') + '/yr';
+
+        // Send day-0 email via Gmail
+        entry.bucket       = bucket;
+        entry.responseTime = responseTime;
+        entry.revenueLost  = revenueLost;
+        entry.auditLink    = driveLink;
+        const firstSentAt  = new Date().toISOString();
+        await sendSequenceEmail(entry, 0);
+        entry.emailSequence = {
+          step:        0,
+          firstSentAt,
+          lastSentAt:  firstSentAt,
+          nextSendAt:  nextSendDate(firstSentAt, 1).toISOString(),
+        };
 
         // Update Sheets row with results
         await appendToSheet([[
@@ -489,7 +429,7 @@ async function phase1_processReadyBatches() {
           entry.status === 'responded' ? 'Responded' : 'No Reply',
           responseTime, revenueLost,
           bucket === 'no_reply' ? 'A - No Reply' : bucket === 'slow_reply' ? 'B - Slow Reply' : 'C - Fast Reply',
-          driveLink, 'Added to Instantly',
+          driveLink, 'Email seq started',
         ]]);
 
         processed++;
@@ -599,6 +539,42 @@ async function phase2_scrapeAndSend() {
   log(`  Logged ${sheetRows.length} rows to Sheets`);
 }
 
+// ─── PHASE 3: Send follow-up emails in sequence ───────────────────────────────
+async function phase3_sendFollowUps() {
+  log('── PHASE 3: Sending follow-up emails ──');
+  const state = loadState();
+  const { CUMULATIVE_DELAYS } = require('./email-sender.js');
+  let sent = 0;
+
+  for (const batch of state.batches) {
+    if (batch.status !== 'processed') continue;
+    for (const entry of (batch.leads || [])) {
+      if (!entry.email || !entry.emailSequence) continue;
+      const seq = entry.emailSequence;
+      const nextStep = seq.step + 1;
+      if (nextStep >= CUMULATIVE_DELAYS.length) continue; // sequence complete
+      if (!isDue(seq.nextSendAt)) continue;
+
+      try {
+        await sendSequenceEmail(entry, nextStep);
+        seq.step       = nextStep;
+        seq.lastSentAt = new Date().toISOString();
+        seq.nextSendAt = nextStep + 1 < CUMULATIVE_DELAYS.length
+          ? nextSendDate(seq.firstSentAt, nextStep + 1).toISOString()
+          : null;
+        sent++;
+        log(`  ✅ Step ${nextStep} → ${entry.name} (${entry.email})`);
+      } catch (e) {
+        log(`  ❌ Step ${nextStep} failed for ${entry.email}: ${e.message}`);
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
+  saveState(state);
+  log(`  Phase 3 done — ${sent} follow-up emails sent`);
+}
+
 // ─── Main pipeline run ────────────────────────────────────────────────────────
 async function runPipeline() {
   log('═══════════════════════════════════════');
@@ -606,6 +582,7 @@ async function runPipeline() {
   log('═══════════════════════════════════════');
   try { await phase1_processReadyBatches(); } catch (e) { log(`PHASE 1 ERROR: ${e.message}`); }
   try { await phase2_scrapeAndSend(); }       catch (e) { log(`PHASE 2 ERROR: ${e.message}`); }
+  try { await phase3_sendFollowUps(); }       catch (e) { log(`PHASE 3 ERROR: ${e.message}`); }
   log('  Pipeline run complete\n');
 }
 
