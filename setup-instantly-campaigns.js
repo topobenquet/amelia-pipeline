@@ -7,7 +7,7 @@ const BASE = 'https://api.instantly.ai/api/v2';
 const H    = { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' };
 
 // ─── Email sequences per bucket ───────────────────────────────────────────────
-const SEQUENCES = {
+const SEQUENCES_MEDSPA = {
 
   no_reply: [
     {
@@ -278,6 +278,282 @@ Juan`,
   ]
 };
 
+const SEQUENCES_CHIRO = {
+
+  no_reply: [
+    {
+      subject: '{{business_name}} — we tested your response system',
+      body: `Hi,
+
+I reached out to {{business_name}} yesterday by text — asked about pricing for a new patient consultation and whether you had availability this week.
+
+I never heard back.
+
+I'm not a real patient. I'm Juan, and I build AI automation for chiropractic offices. That message was a mystery shopper test — and the result wasn't surprising. Most practices in {{city}} have the same gap.
+
+I put together a one-page audit showing exactly what a new patient experiences when they contact {{business_name}} — response time, estimated new patients lost per month, and the revenue impact.
+
+You can see it here: {{audit_link}}
+
+No strings attached. Just thought you'd want to know.
+
+Juan Benquet
+AI Receptionist for Chiropractic Offices · Amelia AI
+clinics.amelia.im`,
+      delay: 0
+    },
+    {
+      subject: 'the new patient gap most {{city}} chiropractors don\'t know they have',
+      body: `Hi,
+
+Quick follow-up on the audit I sent for {{business_name}}.
+
+Here's what the data shows:
+
+  · New patient inquiries that go unanswered: est. 15–25/month
+  · Average new patient value: $2,400/year (initial + ongoing care)
+  · Close rate if responded within 5 min: 30%
+  · Revenue at risk annually: {{revenue_lost}}
+
+That's not a referral problem. It's a response time problem.
+
+People in pain don't wait. They text 2–3 offices and book with whoever responds first.
+
+Amelia — our AI receptionist — responds to every SMS and missed call in under 60 seconds. Books directly into your schedule. Works nights and weekends when your front desk is off.
+
+Worth a 15-minute look? clinics.amelia.im/demo
+
+Juan`,
+      delay: 4
+    },
+    {
+      subject: 'last note for {{business_name}}',
+      body: `Hi,
+
+Last email, I promise.
+
+You have {{reviews}} Google reviews at {{rating}} stars. That tells me your patients love the care you provide.
+
+The problem is the new patients who never became patients — because they texted after hours, didn't hear back, and booked at another office down the street.
+
+Amelia closes that gap. One flat monthly fee, no contracts, live in 48 hours.
+
+If the timing is ever right: clinics.amelia.im/demo
+
+Rooting for you,
+Juan`,
+      delay: 5
+    },
+    {
+      subject: 'checking in — {{business_name}}',
+      body: `Hi,
+
+A few weeks ago I sent an audit showing that {{business_name}} wasn't responding to new patient inquiries — and estimated around {{revenue_lost}} in revenue at risk each year.
+
+Things change. Maybe the timing is better now.
+
+We've activated Amelia for several chiropractic offices in {{city}} recently. Average time to first new patient booking through the system: under 8 hours after going live.
+
+Two plans available:
+· Starter — $497/mo · SMS + chat · 150 conversations/month
+· Pro — $997/mo · SMS + voice + chat · 400 conversations/month
+
+No contracts. Live in 48 hours. 30-day money-back guarantee.
+
+clinics.amelia.im/demo
+
+Juan`,
+      delay: 30
+    },
+    {
+      subject: 'one last thing — {{business_name}}',
+      body: `Hi,
+
+Still here if the timing ever works out.
+
+Quick update: our Starter plan at $497/month covers SMS and chat — 150 conversations included. Most chiropractic offices in {{city}} start here and upgrade once they see new patients booking automatically overnight.
+
+No pressure. No contracts.
+
+clinics.amelia.im/demo
+
+Juan`,
+      delay: 60
+    }
+  ],
+
+  slow_reply: [
+    {
+      subject: '{{business_name}} — your response time vs. the competition',
+      body: `Hi,
+
+Yesterday I texted {{business_name}} asking about a new patient consultation for back pain — as a mystery shopper test.
+
+You responded in about {{response_time}}. That's better than most chiropractic offices in {{city}}.
+
+But here's the problem: leads that don't hear back within 5 minutes are 21× less likely to convert. During those {{response_time}}, that patient texted 2–3 other offices. Whoever replied first got the booking.
+
+I put together a quick audit showing where {{business_name}} stands: {{audit_link}}
+
+No agenda — just thought you'd find it useful.
+
+Juan Benquet · Amelia AI`,
+      delay: 0
+    },
+    {
+      subject: 'what if every new patient inquiry got a reply in 60 seconds?',
+      body: `Hi,
+
+Following up on the audit I shared for {{business_name}}.
+
+Picture this: a new patient texts at 7pm on a Thursday asking about treatment for a herniated disc. Your front desk is gone for the day. Right now, that lead waits until Friday morning — if they don't book somewhere else first.
+
+With Amelia, they get a reply in 60 seconds. A real conversation. An appointment confirmed before they close the app.
+
+48-hour setup. One flat monthly fee. No contracts.
+
+Want to see it live? clinics.amelia.im/demo
+
+Juan`,
+      delay: 4
+    },
+    {
+      subject: 'one thing before I stop — {{business_name}}',
+      body: `Hi,
+
+Last one.
+
+You responded to our test in {{response_time}} — that puts you ahead of most chiropractic offices in {{city}}.
+
+Imagine being the one that responds instantly, 24/7, without adding staff. That's what Amelia does.
+
+clinics.amelia.im/demo
+
+Juan`,
+      delay: 5
+    },
+    {
+      subject: 'checking in — {{business_name}}',
+      body: `Hi,
+
+A few weeks ago I shared an audit for {{business_name}}. You responded to our test in {{response_time}} — better than most — but after-hours and weekend gaps are still costing you new patients.
+
+Two plans now available:
+· Starter — $497/mo · SMS + chat · 150 conversations/month
+· Pro — $997/mo · SMS + voice + chat · 400 conversations/month
+
+No contracts. Live in 48 hours. 30-day money-back guarantee.
+
+Worth 15 minutes? clinics.amelia.im/demo
+
+Juan`,
+      delay: 30
+    },
+    {
+      subject: 'still here — {{business_name}}',
+      body: `Hi,
+
+Last check-in.
+
+You're already responding faster than most chiropractic offices in {{city}}. Amelia just covers the gaps you can't — nights, weekends, peak hours when your front desk is busy.
+
+Starter plan: $497/month. No contracts.
+
+clinics.amelia.im/demo
+
+Juan`,
+      delay: 60
+    }
+  ],
+
+  fast_reply: [
+    {
+      subject: '{{business_name}} — you passed the test 👏',
+      body: `Hi,
+
+I sent {{business_name}} a mystery shopper text yesterday — asked about a new patient consultation for lower back pain.
+
+You responded in {{response_time}}. That puts you in the top 20% of chiropractic offices we've tested in {{city}}. Genuinely impressive.
+
+Here's the thing: even at that speed, there's still a gap. Evenings, weekends, when your front desk is with a patient — those inquiries still wait.
+
+I put together a short audit that shows the full picture: {{audit_link}}
+
+Not a hard sell — just curious whether "instant, 24/7" would move the needle for a practice that's already doing well.
+
+Juan Benquet · Amelia AI`,
+      delay: 0
+    },
+    {
+      subject: 'good vs. great — {{business_name}}',
+      body: `Hi,
+
+Quick follow-up on the {{business_name}} audit.
+
+Good: responding to new patient inquiries within {{response_time}}.
+Great: responding to every single one in under 60 seconds — including the ones that come in at 9pm or during a busy treatment day.
+
+Amelia bridges that gap. Not replacing your front desk — covering the hours and moments they can't.
+
+15 minutes to see it live: clinics.amelia.im/demo
+
+Juan`,
+      delay: 4
+    },
+    {
+      subject: 'final note — {{business_name}}',
+      body: `Hi,
+
+You're already ahead of the competition in {{city}}. This is my last note.
+
+If you ever want to explore what "always on" patient communication looks like for {{business_name}}, I'm one link away:
+
+clinics.amelia.im/demo
+
+Keep doing what you're doing.
+
+Juan`,
+      delay: 5
+    },
+    {
+      subject: 'checking in — {{business_name}}',
+      body: `Hi,
+
+A month ago I shared an audit for {{business_name}} — you were one of the faster-responding practices we tested in {{city}}.
+
+Just wanted to check in. Two plans available now:
+· Starter — $497/mo · SMS + chat · 150 conversations/month
+· Pro — $997/mo · SMS + voice + chat · 400 conversations/month
+
+No contracts. Live in 48 hours. 30-day money-back guarantee.
+
+clinics.amelia.im/demo
+
+Juan`,
+      delay: 30
+    },
+    {
+      subject: 'last one — {{business_name}}',
+      body: `Hi,
+
+Final note.
+
+You responded faster than 80% of chiropractic offices we tested in {{city}}. Amelia just closes the last gap — the hours when your front desk isn't available.
+
+$497/month to start. Cancel anytime.
+
+clinics.amelia.im/demo
+
+Juan`,
+      delay: 60
+    }
+  ]
+};
+
+const SEQUENCES = process.env.NICHE === 'chiro' ? SEQUENCES_CHIRO
+  : process.env.NICHE === 'dental' ? SEQUENCES_MEDSPA  // dental TBD, fallback to medspa
+  : SEQUENCES_MEDSPA;
+
 const CAMPAIGN_NAMES = {
   no_reply:   'Amelia Audit — A: No Reply',
   slow_reply: 'Amelia Audit — B: Slow Reply (4–24h)',
@@ -455,7 +731,7 @@ async function main() {
   console.log('   5. Then: Instantly → Campaigns → select each → Add Sending Account → Launch\n');
 }
 
-module.exports = { SEQUENCES, CAMPAIGN_NAMES };
+module.exports = { SEQUENCES, SEQUENCES_MEDSPA, SEQUENCES_CHIRO, CAMPAIGN_NAMES };
 
 if (require.main === module) {
   main().catch(console.error);

@@ -19,7 +19,13 @@ function getTransport() {
 // Cumulative days from first email (day 0)
 const CUMULATIVE_DELAYS = [0, 4, 9, 39, 99];
 
-const SEQUENCES = require('./setup-instantly-campaigns.js').SEQUENCES;
+const { SEQUENCES_MEDSPA, SEQUENCES_CHIRO } = require('./setup-instantly-campaigns.js');
+
+function getSequences() {
+  const niche = process.env.NICHE || 'medspa';
+  if (niche === 'chiro') return SEQUENCES_CHIRO;
+  return SEQUENCES_MEDSPA;
+}
 
 function fillTemplate(text, vars) {
   return text.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] || '');
@@ -42,7 +48,7 @@ function buildVars(lead) {
 
 async function sendSequenceEmail(lead, step) {
   const bucket   = lead.bucket || 'no_reply';
-  const sequence = SEQUENCES[bucket];
+  const sequence = getSequences()[bucket];
   if (!sequence || step >= sequence.length) return false;
 
   const email  = sequence[step];
