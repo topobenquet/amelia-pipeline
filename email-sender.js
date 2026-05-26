@@ -90,8 +90,18 @@ async function sendSequenceEmail(lead, step) {
   const text    = fillTemplate(email.body, vars);
   const niche   = process.env.NICHE || 'medspa';
 
+  // Strip plain-text signature block (everything from "Juan Benquet" closing onwards)
+  const cleanText = text.replace(/\n+Juan Benquet[\s\S]*$/m, '').trimEnd();
+
+  // Add UTM params to all links
+  const utmParams = `utm_source=email&utm_medium=cold_outreach&utm_campaign=audit_sequence&utm_content=step_${step}&utm_term=${encodeURIComponent((process.env.NICHE || 'medspa'))}`;
+  const textWithUtm = cleanText.replace(/(https?:\/\/[^\s]+)/g, (url) => {
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}${utmParams}`;
+  });
+
   // Convert plain text to HTML paragraphs + append signature
-  const bodyHtml = text
+  const bodyHtml = textWithUtm
     .split(/\n\n+/)
     .map(p => `<p style="margin:0 0 14px;line-height:1.6;">${p.replace(/\n/g, '<br>')}</p>`)
     .join('');
