@@ -247,6 +247,22 @@ async function checkResponses(entries) {
 // ─── Email sequence (Gmail SMTP) ──────────────────────────────────────────────
 const { sendSequenceEmail, nextSendDate, isDue } = require('./email-sender.js');
 
+// ─── Short.io link shortener ──────────────────────────────────────────────────
+async function createShortLink(driveUrl, slug) {
+  if (!process.env.SHORT_IO_API_KEY) return driveUrl;
+  try {
+    const res = await axios.post('https://api.short.io/links', {
+      domain:      process.env.SHORT_IO_DOMAIN || 'go.amelia.im',
+      originalURL: driveUrl,
+      path:        slug,
+    }, { headers: { authorization: process.env.SHORT_IO_API_KEY, 'content-type': 'application/json' } });
+    return res.data.shortURL || driveUrl;
+  } catch (e) {
+    log(`  Short.io failed (${e.response?.data?.error || e.message}), using Drive link`);
+    return driveUrl;
+  }
+}
+
 // ─── Google Maps scrape ───────────────────────────────────────────────────────
 async function scrapeLeads(city, count, contacted) {
   const MAPS_KEY = process.env.GOOGLE_MAPS_API_KEY;
@@ -393,9 +409,12 @@ async function phase1_processReadyBatches() {
     for (const entry of entries) {
       if (!entry.email) continue;
       try {
-        // Generate + upload PDF
+        // Generate + upload PDF + create short link
         const driveLink = await generateAndUploadPDF(entry, drive, folderId);
-        entry.audit_link = driveLink;
+        const slug      = entry.name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 50);
+        const auditLink = await createShortLink(driveLink, slug);
+        entry.audit_link = auditLink;
+        log(`  🔗 Audit link: ${auditLink}`);
 
         // Bucket
         const bucket = entry.status !== 'responded' ? 'no_reply'
@@ -411,7 +430,7 @@ async function phase1_processReadyBatches() {
         entry.bucket       = bucket;
         entry.responseTime = responseTime;
         entry.revenueLost  = revenueLost;
-        entry.auditLink    = driveLink;
+        entry.auditLink    = auditLink;
         const firstSentAt  = new Date().toISOString();
         await sendSequenceEmail(entry, 0);
         entry.emailSequence = {
