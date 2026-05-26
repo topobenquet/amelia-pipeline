@@ -48,10 +48,14 @@ function buildVars(lead) {
 
 const ASSETS_URL = 'https://raw.githubusercontent.com/topobenquet/amelia-pipeline/main/public';
 
-function buildSignatureHTML(niche) {
+function buildSignatureHTML(niche, step) {
   const title = niche === 'chiro' ? 'AI Receptionist for Chiropractic Offices'
     : niche === 'dental' ? 'AI Receptionist for Dental Offices'
     : 'AI Receptionist for Med Spas';
+
+  const utm = `utm_source=email&utm_medium=cold_outreach&utm_campaign=audit_sequence&utm_content=step_${step}&utm_term=${encodeURIComponent(niche)}`;
+  const demoUrl  = `https://clinics.amelia.im/demo?${utm}`;
+  const logoUrl  = `https://clinics.amelia.im?${utm}`;
 
   return `
 <table cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,sans-serif;font-size:13px;color:#1a1a1a;margin-top:24px;padding-top:16px;border-top:2px solid #7C3AED;">
@@ -64,15 +68,17 @@ function buildSignatureHTML(niche) {
       <div style="font-weight:700;font-size:15px;color:#0A0B1A;">Juan Benquet</div>
       <div style="font-size:12px;color:#7C3AED;font-weight:600;margin-top:2px;">Founder &amp; CEO · Amelia AI</div>
       <div style="font-size:11px;color:#6B7280;margin-top:4px;">${title}</div>
-      <div style="margin-top:8px;display:flex;gap:12px;">
-        <a href="https://clinics.amelia.im/demo"
+      <div style="margin-top:8px;">
+        <a href="${demoUrl}"
           style="font-size:11px;color:#7C3AED;text-decoration:none;font-weight:600;">📅 Book a demo</a>
         &nbsp;&nbsp;
-        <a href="https://clinics.amelia.im"
+        <a href="${logoUrl}"
           style="font-size:11px;color:#6B7280;text-decoration:none;">🌐 clinics.amelia.im</a>
       </div>
       <div style="margin-top:10px;">
-        <img src="${ASSETS_URL}/amelia-logo.png" height="28" alt="Amelia AI" style="display:block;">
+        <a href="${logoUrl}">
+          <img src="${ASSETS_URL}/amelia-logo.png" height="28" alt="Amelia AI" style="display:block;border:none;">
+        </a>
       </div>
     </td>
   </tr>
@@ -93,15 +99,8 @@ async function sendSequenceEmail(lead, step) {
   // Strip plain-text signature block (everything from "Juan Benquet" closing onwards)
   const cleanText = text.replace(/\n+Juan Benquet[\s\S]*$/m, '').trimEnd();
 
-  // Add UTM params to all links
-  const utmParams = `utm_source=email&utm_medium=cold_outreach&utm_campaign=audit_sequence&utm_content=step_${step}&utm_term=${encodeURIComponent((process.env.NICHE || 'medspa'))}`;
-  const textWithUtm = cleanText.replace(/(https?:\/\/[^\s]+)/g, (url) => {
-    const sep = url.includes('?') ? '&' : '?';
-    return `${url}${sep}${utmParams}`;
-  });
-
-  // Convert plain text to HTML paragraphs + append signature
-  const bodyHtml = textWithUtm
+  // Convert plain text to HTML paragraphs (no UTMs on body links — audit goes to Drive)
+  const bodyHtml = cleanText
     .split(/\n\n+/)
     .map(p => `<p style="margin:0 0 14px;line-height:1.6;">${p.replace(/\n/g, '<br>')}</p>`)
     .join('');
@@ -112,7 +111,7 @@ async function sendSequenceEmail(lead, step) {
 <body style="margin:0;padding:24px 0;background:#fff;font-family:Arial,sans-serif;font-size:14px;color:#1a1a1a;max-width:600px;">
   <div style="padding:0 24px;">
     ${bodyHtml}
-    ${buildSignatureHTML(niche)}
+    ${buildSignatureHTML(niche, step)}
   </div>
 </body></html>`;
 
