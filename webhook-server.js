@@ -168,9 +168,10 @@ app.get('/oauth/start', (req, res) => {
     response_type: 'code',
     redirect_uri:  `https://${req.headers.host}/oauth/callback`,
     client_id:     process.env.GHL_CLIENT_ID,
-    scope:         'locations.write locations.read users.write users.read',
+    scope:         'locations.write locations.read users.write users.read businesses.readonly',
   });
-  res.redirect(`https://marketplace.gohighlevel.com/oauth/chooselocation?${params}`);
+  // Agency-level app uses chooseagency endpoint
+  res.redirect(`https://marketplace.gohighlevel.com/oauth/chooseagency?${params}`);
 });
 
 // Step 2: GHL redirects here with ?code=...
