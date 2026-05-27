@@ -125,6 +125,91 @@ app.post('/webhook/ghl', async (req, res) => {
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
+// ─── GHL OAuth flow ───────────────────────────────────────────────────────────
+const OAUTH_TOKEN_FILE = path.join(__dirname, 'ghl-oauth-tokens.json');
+
+function saveOAuthTokens(tokens) {
+  fs.writeFileSync(OAUTH_TOKEN_FILE, JSON.stringify(tokens, null, 2));
+}
+
+function loadOAuthTokens() {
+  try { return JSON.parse(fs.readFileSync(OAUTH_TOKEN_FILE, 'utf8')); } catch { return null; }
+}
+
+async function refreshOAuthToken() {
+  const tokens = loadOAuthTokens();
+  if (!tokens?.refresh_token) throw new Error('No refresh token stored — re-authorize at /oauth/start');
+  const res = await axios.post('https://services.leadconnectorhq.com/oauth/token', new URLSearchParams({
+    client_id:     process.env.GHL_CLIENT_ID,
+    client_secret: process.env.GHL_CLIENT_SECRET,
+    grant_type:    'refresh_token',
+    refresh_token: tokens.refresh_token,
+  }), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+  const updated = { ...tokens, ...res.data, refreshed_at: new Date().toISOString() };
+  saveOAuthTokens(updated);
+  log(`OAuth token refreshed`);
+  return updated.access_token;
+}
+
+async function getOAuthAccessToken() {
+  const tokens = loadOAuthTokens();
+  if (!tokens) throw new Error('Not authorized — visit /oauth/start');
+  // Refresh if expires within 30 min
+  const expiresAt = new Date(tokens.refreshed_at || tokens.authorized_at).getTime() + (tokens.expires_in * 1000);
+  if (Date.now() > expiresAt - 1800000) {
+    return await refreshOAuthToken();
+  }
+  return tokens.access_token;
+}
+
+// Step 1: redirect to GHL authorization page
+app.get('/oauth/start', (req, res) => {
+  const params = new URLSearchParams({
+    response_type: 'code',
+    redirect_uri:  `https://${req.headers.host}/oauth/callback`,
+    client_id:     process.env.GHL_CLIENT_ID,
+    scope:         'locations.write locations.read users.write users.read',
+  });
+  res.redirect(`https://marketplace.gohighlevel.com/oauth/chooselocation?${params}`);
+});
+
+// Step 2: GHL redirects here with ?code=...
+app.get('/oauth/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send('Missing code parameter');
+  try {
+    const tokenRes = await axios.post('https://services.leadconnectorhq.com/oauth/token', new URLSearchParams({
+      client_id:     process.env.GHL_CLIENT_ID,
+      client_secret: process.env.GHL_CLIENT_SECRET,
+      grant_type:    'authorization_code',
+      code,
+      redirect_uri:  `https://${req.headers.host}/oauth/callback`,
+    }), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+    const tokens = { ...tokenRes.data, authorized_at: new Date().toISOString() };
+    saveOAuthTokens(tokens);
+    log(`OAuth authorized — access token stored`);
+    res.send(`
+      <h2>✅ Amelia Onboarding authorized!</h2>
+      <p>Token stored. You can now create sub-accounts via the onboarding script.</p>
+      <p>Access token expires in ${Math.round(tokens.expires_in / 3600)}h — auto-refreshes.</p>
+    `);
+  } catch (e) {
+    log(`OAuth callback error: ${e.response?.data ? JSON.stringify(e.response.data) : e.message}`);
+    res.status(500).send(`OAuth error: ${e.message}`);
+  }
+});
+
+// OAuth status check
+app.get('/oauth/status', (req, res) => {
+  const tokens = loadOAuthTokens();
+  if (!tokens) return res.json({ status: 'not_authorized', action: 'Visit /oauth/start to authorize' });
+  const authorizedAt = tokens.refreshed_at || tokens.authorized_at;
+  const expiresAt = new Date(new Date(authorizedAt).getTime() + tokens.expires_in * 1000);
+  res.json({ status: 'authorized', authorized_at: authorizedAt, expires_at: expiresAt, scope: tokens.scope });
+});
+
+module.exports.getOAuthAccessToken = getOAuthAccessToken;
+
 // ─── Daily summary email ───────────────────────────────────────────────────────
 async function sendDailySummary() {
   const STATE_FILE     = path.join(__dirname, 'pipeline-state.json');

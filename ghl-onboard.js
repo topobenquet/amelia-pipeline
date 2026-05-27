@@ -3,19 +3,24 @@ const axios  = require('axios');
 const fs     = require('fs');
 const path   = require('path');
 const { google } = require('googleapis');
+const { getOAuthAccessToken } = require('./webhook-server.js');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const AGENCY_API_KEY  = process.env.GHL_AGENCY_API_KEY;
+const COMPANY_ID      = process.env.GHL_COMPANY_ID;
 const SHEETS_ID       = process.env.ONBOARDING_SHEETS_ID || process.env.GOOGLE_SHEETS_ID;
-const SNAPSHOT_MEDSPA = process.env.GHL_SNAPSHOT_MEDSPA;  // set after you create snapshot in GHL
+const SNAPSHOT_MEDSPA = process.env.GHL_SNAPSHOT_MEDSPA;
 const SNAPSHOT_CHIRO  = process.env.GHL_SNAPSHOT_CHIRO;
 
 const GHL_BASE = 'https://services.leadconnectorhq.com';
-const GHL_H = {
-  Authorization: `Bearer ${AGENCY_API_KEY}`,
-  'Content-Type': 'application/json',
-  Version: '2021-07-28',
-};
+
+async function ghlHeaders() {
+  const token = await getOAuthAccessToken();
+  return {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+    Version: '2021-07-28',
+  };
+}
 
 // ─── Timezone map by state ────────────────────────────────────────────────────
 const STATE_TZ = {
@@ -112,16 +117,17 @@ async function createSubAccount(client) {
   const tz = STATE_TZ[client.state.toUpperCase()] || 'America/Chicago';
 
   const payload = {
-    name:     client.businessName,
-    email:    client.ownerEmail,
-    phone:    client.ownerPhone,
-    address:  client.address,
-    city:     client.city,
-    state:    client.state,
-    country:  client.country,
+    name:      client.businessName,
+    companyId: COMPANY_ID,
+    email:     client.ownerEmail,
+    phone:     client.ownerPhone,
+    address:   client.address,
+    city:      client.city,
+    state:     client.state,
+    country:   client.country,
     postalCode: client.zip,
-    website:  client.website,
-    timezone: tz,
+    website:   client.website,
+    timezone:  tz,
     prospectInfo: {
       firstName: client.ownerFirstName,
       lastName:  client.ownerLastName,
@@ -129,7 +135,8 @@ async function createSubAccount(client) {
     },
   };
 
-  const res = await axios.post(`${GHL_BASE}/locations`, payload, { headers: GHL_H });
+  const h = await ghlHeaders();
+  const res = await axios.post(`${GHL_BASE}/locations`, payload, { headers: h });
   return res.data.location || res.data;
 }
 
@@ -140,20 +147,20 @@ async function installSnapshot(locationId, niche) {
     log(`  ⚠️  No snapshot ID configured for niche: ${niche} — skipping`);
     return;
   }
-
+  const h = await ghlHeaders();
   await axios.post(`${GHL_BASE}/locations/${locationId}/snapshots/copy`, {
     snapshotId,
     override: false,
-  }, { headers: GHL_H });
+  }, { headers: h });
 
   log(`  Snapshot installed for ${locationId}`);
 }
 
 // ─── GHL: Search and purchase local phone number ──────────────────────────────
 async function purchasePhoneNumber(locationId, areaCode) {
-  // Search for available numbers
+  const h = await ghlHeaders();
   const search = await axios.get(`${GHL_BASE}/phone-number/search`, {
-    headers: GHL_H,
+    headers: h,
     params: { locationId, areaCode, type: 'local', limit: 5 },
   });
 
@@ -164,12 +171,10 @@ async function purchasePhoneNumber(locationId, areaCode) {
   }
 
   const chosen = numbers[0].phoneNumber;
-
-  // Buy the number
   await axios.post(`${GHL_BASE}/phone-number/buy`, {
     locationId,
     phoneNumber: chosen,
-  }, { headers: GHL_H });
+  }, { headers: h });
 
   log(`  Purchased number: ${chosen}`);
   return chosen;
@@ -178,6 +183,7 @@ async function purchasePhoneNumber(locationId, areaCode) {
 // ─── GHL: Create location user (owner login) ──────────────────────────────────
 async function createLocationUser(locationId, client) {
   try {
+    const h = await ghlHeaders();
     await axios.post(`${GHL_BASE}/users`, {
       locationIds: [locationId],
       firstName:   client.ownerFirstName,
@@ -209,10 +215,9 @@ async function createLocationUser(locationId, client) {
         tagsEnabled:           true,
         leadValueEnabled:      true,
       },
-    }, { headers: GHL_H });
+    }, { headers: h });
     log(`  User created: ${client.ownerEmail}`);
   } catch (e) {
-    // User may already exist if email is reused
     log(`  User creation note: ${e.response?.data?.message || e.message}`);
   }
 }
@@ -406,8 +411,8 @@ async function onboardClient(client) {
 
 // ─── Run: process all pending rows ───────────────────────────────────────────
 async function runOnboarding() {
-  if (!AGENCY_API_KEY) {
-    console.error('Missing GHL_AGENCY_API — add it to .env');
+  if (!process.env.GHL_CLIENT_ID || !process.env.GHL_CLIENT_SECRET) {
+    console.error('Missing GHL_CLIENT_ID or GHL_CLIENT_SECRET — add them to .env');
     process.exit(1);
   }
 
