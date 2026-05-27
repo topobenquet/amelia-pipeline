@@ -711,9 +711,9 @@ const { startWebhookServer, sendDailySummary } = require('./webhook-server');
 startWebhookServer();
 
 // Always schedule daily cron regardless of RUN_NOW
-log('Pipeline scheduler started — daily run at 9:00 AM EST');
-cron.schedule('0 9 * * *', runPipeline, { timezone: 'America/New_York' });
-cron.schedule('30 9 * * *', sendDailySummary, { timezone: 'America/New_York' });
+log('Pipeline scheduler started — daily run at 10:00 AM EST');
+cron.schedule('0 10 * * *', runPipeline, { timezone: 'America/New_York' });
+cron.schedule('30 10 * * *', sendDailySummary, { timezone: 'America/New_York' });
 
 // If RUN_NOW=true, also run immediately (e.g. after a new deploy)
 if (process.env.RUN_NOW === 'true') {
