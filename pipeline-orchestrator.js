@@ -611,14 +611,15 @@ const { startWebhookServer, sendDailySummary } = require('./webhook-server');
 // Always start webhook server (handles inbound SMS + health check)
 startWebhookServer();
 
-if (process.env.RUN_NOW === 'true') {
-  runPipeline().catch(console.error);
-} else {
-  log('Pipeline scheduler started — waiting for 9:00 AM UTC...');
-  // Daily pipeline at 9:00 AM UTC
-  cron.schedule('0 9 * * *', runPipeline, { timezone: 'UTC' });
-  // Daily summary at 9:30 AM UTC (after pipeline finishes)
-  cron.schedule('30 9 * * *', sendDailySummary, { timezone: 'UTC' });
+// Always schedule daily cron regardless of RUN_NOW
+log('Pipeline scheduler started — daily run at 9:00 AM UTC');
+cron.schedule('0 9 * * *', runPipeline, { timezone: 'UTC' });
+cron.schedule('30 9 * * *', sendDailySummary, { timezone: 'UTC' });
 
-  process.on('SIGTERM', () => { log('Received SIGTERM, shutting down'); process.exit(0); });
+// If RUN_NOW=true, also run immediately (e.g. after a new deploy)
+if (process.env.RUN_NOW === 'true') {
+  log('RUN_NOW=true — running pipeline immediately');
+  runPipeline().catch(console.error);
 }
+
+process.on('SIGTERM', () => { log('Received SIGTERM, shutting down'); process.exit(0); });
