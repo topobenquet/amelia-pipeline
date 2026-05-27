@@ -21,22 +21,114 @@ const CITIES = [
   'Phoenix, AZ', 'San Diego, CA', 'Portland, OR', 'Seattle, WA',
 ];
 
-// ─── State helpers ────────────────────────────────────────────────────────────
-function loadState() {
-  try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); }
-  catch { return { batches: [], cityIndex: 0 }; }
+// ─── State helpers (persisted to Google Drive so Railway restarts don't wipe it) ─
+const STATE_DRIVE_FILENAME    = 'amelia-pipeline-state.json';
+const CONTACTED_DRIVE_FILENAME = 'amelia-contacted-phones.json';
+
+let _driveStateFileId    = null;
+let _driveContactedFileId = null;
+
+async function findDriveFile(drive, name) {
+  const res = await drive.files.list({
+    q: `name='${name}' and trashed=false`,
+    fields: 'files(id)',
+    spaces: 'drive',
+  });
+  return res.data.files?.[0]?.id || null;
 }
 
-function saveState(state) {
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+async function readDriveJson(drive, name) {
+  try {
+    const fileId = await findDriveFile(drive, name);
+    if (!fileId) return null;
+    const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'text' });
+    return JSON.parse(res.data);
+  } catch { return null; }
 }
 
-function loadContacted() {
-  if (fs.existsSync(CONTACTED_FILE)) {
-    try { return new Set(JSON.parse(fs.readFileSync(CONTACTED_FILE, 'utf8'))); } catch {}
+async function writeDriveJson(drive, name, data) {
+  const json = JSON.stringify(data, null, 2);
+  const fileId = await findDriveFile(drive, name);
+  if (fileId) {
+    await drive.files.update({
+      fileId,
+      media: { mimeType: 'application/json', body: json },
+    });
+  } else {
+    await drive.files.create({
+      requestBody: { name, mimeType: 'application/json' },
+      media: { mimeType: 'application/json', body: json },
+      fields: 'id',
+    });
   }
-  // Rebuild from pipeline state (handles container restarts after redeploy)
-  const state = loadState();
+}
+
+// In-memory cache so we don't hit Drive on every save within a single run
+let _stateCache    = null;
+let _contactedCache = null;
+let _driveClient   = null;
+
+function getSharedDriveClient() {
+  if (!_driveClient) {
+    try { ({ drive: _driveClient } = getDriveClient()); } catch {}
+  }
+  return _driveClient;
+}
+
+async function loadState() {
+  // Try local file first (fast, works locally)
+  try {
+    const local = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    _stateCache = local;
+    return local;
+  } catch {}
+
+  // Fall back to Drive (Railway / cloud)
+  if (_stateCache) return _stateCache;
+  const drive = getSharedDriveClient();
+  if (drive) {
+    const remote = await readDriveJson(drive, STATE_DRIVE_FILENAME);
+    if (remote) { _stateCache = remote; return remote; }
+  }
+  return { batches: [], cityIndex: 0 };
+}
+
+async function saveState(state) {
+  _stateCache = state;
+  // Always write local copy
+  try { fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2)); } catch {}
+  // Persist to Drive
+  const drive = getSharedDriveClient();
+  if (drive) {
+    try { await writeDriveJson(drive, STATE_DRIVE_FILENAME, state); }
+    catch (e) { log(`  State Drive sync failed: ${e.message}`); }
+  }
+}
+
+async function loadContacted() {
+  // Try local
+  if (fs.existsSync(CONTACTED_FILE)) {
+    try {
+      const phones = new Set(JSON.parse(fs.readFileSync(CONTACTED_FILE, 'utf8')));
+      _contactedCache = phones;
+      return phones;
+    } catch {}
+  }
+
+  // Try Drive
+  if (_contactedCache) return _contactedCache;
+  const drive = getSharedDriveClient();
+  if (drive) {
+    const remote = await readDriveJson(drive, CONTACTED_DRIVE_FILENAME);
+    if (remote) {
+      const phones = new Set(remote);
+      _contactedCache = phones;
+      return phones;
+    }
+  }
+
+  // Rebuild from state as last resort
+  const state = await loadState();
   const phones = new Set();
   for (const batch of state.batches) {
     for (const lead of (batch.leads || [])) {
@@ -45,11 +137,18 @@ function loadContacted() {
     }
   }
   if (phones.size) log(`  Rebuilt contacted list from state: ${phones.size} phones`);
+  _contactedCache = phones;
   return phones;
 }
 
-function saveContacted(set) {
-  fs.writeFileSync(CONTACTED_FILE, JSON.stringify([...set]));
+async function saveContacted(set) {
+  _contactedCache = set;
+  try { fs.writeFileSync(CONTACTED_FILE, JSON.stringify([...set])); } catch {}
+  const drive = getSharedDriveClient();
+  if (drive) {
+    try { await writeDriveJson(drive, CONTACTED_DRIVE_FILENAME, [...set]); }
+    catch (e) { log(`  Contacted Drive sync failed: ${e.message}`); }
+  }
 }
 
 // ─── Google Drive (Service Account) ──────────────────────────────────────────
@@ -383,7 +482,7 @@ function log(msg) {
 // ─── PHASE 1: Check responses + process ready batches ────────────────────────
 async function phase1_processReadyBatches() {
   log('── PHASE 1: Checking ready batches ──');
-  const state  = loadState();
+  const state  = await loadState();
   const ready  = state.batches.filter(b => {
     if (b.status !== 'sms_sent') return false;
     const hoursSinceSent = (Date.now() - new Date(b.sentAt).getTime()) / 3600000;
@@ -462,17 +561,17 @@ async function phase1_processReadyBatches() {
     batch.status     = 'processed';
     batch.processedAt = new Date().toISOString();
     batch.leads       = entries;
-    log(`  Batch ${batch.date} done — ${processed} pushed to Instantly`);
+    log(`  Batch ${batch.date} done — ${processed} reports sent`);
   }
 
-  saveState(state);
+  await saveState(state);
 }
 
 // ─── PHASE 2: Scrape new leads + send SMS ─────────────────────────────────────
 async function phase2_scrapeAndSend() {
   log('── PHASE 2: Scraping new leads ──');
-  const state     = loadState();
-  const contacted = loadContacted();
+  const state     = await loadState();
+  const contacted = await loadContacted();
 
   // Pick next city (CITY_OVERRIDE forces a specific city for testing)
   const city = process.env.CITY_OVERRIDE || CITIES[state.cityIndex % CITIES.length];
@@ -535,14 +634,14 @@ async function phase2_scrapeAndSend() {
     }
 
     // Save progress after each batch so we don't lose data if process stops
-    saveContacted(contacted);
+    await saveContacted(contacted);
     fetchSize = Math.ceil(needed * 2); // next round fetch 2x what we still need
   }
 
   batch.smsSent = smsSent;
   state.batches.push(batch);
-  saveState(state);
-  saveContacted(contacted);
+  await saveState(state);
+  await saveContacted(contacted);
   log(`  Phase 2 done — ${smsSent} SMS sent`);
 
   // Log to Google Sheets — one row per lead, uniform columns
@@ -561,7 +660,7 @@ async function phase2_scrapeAndSend() {
 // ─── PHASE 3: Send follow-up emails in sequence ───────────────────────────────
 async function phase3_sendFollowUps() {
   log('── PHASE 3: Sending follow-up emails ──');
-  const state = loadState();
+  const state = await loadState();
   const { CUMULATIVE_DELAYS } = require('./email-sender.js');
   let sent = 0;
 
@@ -590,7 +689,7 @@ async function phase3_sendFollowUps() {
     }
   }
 
-  saveState(state);
+  await saveState(state);
   log(`  Phase 3 done — ${sent} follow-up emails sent`);
 }
 
