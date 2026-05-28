@@ -142,9 +142,12 @@ async function saveContacted(set) {
 async function saveContacted(set) {
   _contactedCache = set;
   try { fs.writeFileSync(CONTACTED_FILE, JSON.stringify([...set])); } catch {}
-  const drive = getSharedDriveClient();
-  if (drive) {
-    try { await writeDriveJson(drive, CONTACTED_DRIVE_FILENAME, [...set]); }
+  try {
+    const sheets = await getSheetsClient();
+    await writeSheetCell(sheets, SHEETS_CONTACTED_TAB, [...set]);
+  } catch (e) { log(`  Contacted Sheets sync failed: ${e.message}`); }
+}
+
 // ─── Google Drive (Service Account) ──────────────────────────────────────────
 function getDriveClient() {
   let credentials;
