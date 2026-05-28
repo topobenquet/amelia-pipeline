@@ -21,58 +21,48 @@ const CITIES = [
   'Phoenix, AZ', 'San Diego, CA', 'Portland, OR', 'Seattle, WA',
 ];
 
-// ─── State helpers (persisted to Google Drive so Railway restarts don't wipe it) ─
-const STATE_DRIVE_FILENAME    = 'amelia-pipeline-state.json';
-const CONTACTED_DRIVE_FILENAME = 'amelia-contacted-phones.json';
+// ─── State helpers (persisted to Google Sheets tab so Railway restarts don't wipe it) ─
+const SHEETS_STATE_TAB      = '_pipeline_state';
+const SHEETS_CONTACTED_TAB  = '_contacted_phones';
 
-let _driveStateFileId    = null;
-let _driveContactedFileId = null;
+let _stateCache    = null;
+let _contactedCache = null;
 
-async function findDriveFile(drive, name) {
-  const res = await drive.files.list({
-    q: `name='${name}' and trashed=false`,
-    fields: 'files(id)',
-    spaces: 'drive',
-  });
-  return res.data.files?.[0]?.id || null;
+async function getSheetsClient() {
+  const { auth } = getDriveClient();
+  return google.sheets({ version: 'v4', auth });
 }
 
-async function readDriveJson(drive, name) {
+async function ensureTab(sheets, title) {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: process.env.GOOGLE_SHEETS_ID });
+  const exists = meta.data.sheets.some(s => s.properties.title === title);
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title } } }] },
+    });
+  }
+}
+
+async function readSheetCell(sheets, tab) {
   try {
-    const fileId = await findDriveFile(drive, name);
-    if (!fileId) return null;
-    const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'text' });
-    return JSON.parse(res.data);
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+      range: `${tab}!A1`,
+    });
+    const val = res.data.values?.[0]?.[0];
+    return val ? JSON.parse(val) : null;
   } catch { return null; }
 }
 
-async function writeDriveJson(drive, name, data) {
-  const json = JSON.stringify(data, null, 2);
-  const fileId = await findDriveFile(drive, name);
-  if (fileId) {
-    await drive.files.update({
-      fileId,
-      media: { mimeType: 'application/json', body: json },
-    });
-  } else {
-    await drive.files.create({
-      requestBody: { name, mimeType: 'application/json' },
-      media: { mimeType: 'application/json', body: json },
-      fields: 'id',
-    });
-  }
-}
-
-// In-memory cache so we don't hit Drive on every save within a single run
-let _stateCache    = null;
-let _contactedCache = null;
-let _driveClient   = null;
-
-function getSharedDriveClient() {
-  if (!_driveClient) {
-    try { ({ drive: _driveClient } = getDriveClient()); } catch {}
-  }
-  return _driveClient;
+async function writeSheetCell(sheets, tab, data) {
+  await ensureTab(sheets, tab);
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+    range: `${tab}!A1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[JSON.stringify(data)]] },
+  });
 }
 
 async function loadState() {
@@ -83,30 +73,28 @@ async function loadState() {
     return local;
   } catch {}
 
-  // Fall back to Drive (Railway / cloud)
   if (_stateCache) return _stateCache;
-  const drive = getSharedDriveClient();
-  if (drive) {
-    const remote = await readDriveJson(drive, STATE_DRIVE_FILENAME);
+
+  // Load from Sheets
+  try {
+    const sheets = await getSheetsClient();
+    const remote = await readSheetCell(sheets, SHEETS_STATE_TAB);
     if (remote) { _stateCache = remote; return remote; }
-  }
+  } catch (e) { log(`  State Sheets load failed: ${e.message}`); }
+
   return { batches: [], cityIndex: 0 };
 }
 
 async function saveState(state) {
   _stateCache = state;
-  // Always write local copy
   try { fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2)); } catch {}
-  // Persist to Drive
-  const drive = getSharedDriveClient();
-  if (drive) {
-    try { await writeDriveJson(drive, STATE_DRIVE_FILENAME, state); }
-    catch (e) { log(`  State Drive sync failed: ${e.message}`); }
-  }
+  try {
+    const sheets = await getSheetsClient();
+    await writeSheetCell(sheets, SHEETS_STATE_TAB, state);
+  } catch (e) { log(`  State Sheets sync failed: ${e.message}`); }
 }
 
 async function loadContacted() {
-  // Try local
   if (fs.existsSync(CONTACTED_FILE)) {
     try {
       const phones = new Set(JSON.parse(fs.readFileSync(CONTACTED_FILE, 'utf8')));
@@ -115,17 +103,18 @@ async function loadContacted() {
     } catch {}
   }
 
-  // Try Drive
   if (_contactedCache) return _contactedCache;
-  const drive = getSharedDriveClient();
-  if (drive) {
-    const remote = await readDriveJson(drive, CONTACTED_DRIVE_FILENAME);
+
+  // Load from Sheets
+  try {
+    const sheets = await getSheetsClient();
+    const remote = await readSheetCell(sheets, SHEETS_CONTACTED_TAB);
     if (remote) {
       const phones = new Set(remote);
       _contactedCache = phones;
       return phones;
     }
-  }
+  } catch {}
 
   // Rebuild from state as last resort
   const state = await loadState();
@@ -144,13 +133,18 @@ async function loadContacted() {
 async function saveContacted(set) {
   _contactedCache = set;
   try { fs.writeFileSync(CONTACTED_FILE, JSON.stringify([...set])); } catch {}
+  try {
+    const sheets = await getSheetsClient();
+    await writeSheetCell(sheets, SHEETS_CONTACTED_TAB, [...set]);
+  } catch (e) { log(`  Contacted Sheets sync failed: ${e.message}`); }
+}
+
+async function saveContacted(set) {
+  _contactedCache = set;
+  try { fs.writeFileSync(CONTACTED_FILE, JSON.stringify([...set])); } catch {}
   const drive = getSharedDriveClient();
   if (drive) {
     try { await writeDriveJson(drive, CONTACTED_DRIVE_FILENAME, [...set]); }
-    catch (e) { log(`  Contacted Drive sync failed: ${e.message}`); }
-  }
-}
-
 // ─── Google Drive (Service Account) ──────────────────────────────────────────
 function getDriveClient() {
   let credentials;
