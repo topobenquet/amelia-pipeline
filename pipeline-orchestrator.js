@@ -636,7 +636,11 @@ async function phase2_scrapeAndSend() {
   }
 
   batch.smsSent = smsSent;
+  // Only keep leads with emails in state (reduces size, Phase 1 only needs these)
+  batch.leads = batch.leads.filter(l => l.email);
   state.batches.push(batch);
+  // Keep only last 2 unprocessed batches to stay under Sheets 50k cell limit
+  state.batches = state.batches.filter(b => b.status !== 'processed').slice(-2);
   await saveState(state);
   await saveContacted(contacted);
   log(`  Phase 2 done — ${smsSent} SMS sent`);

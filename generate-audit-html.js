@@ -362,7 +362,7 @@ async function generatePDF(lead, outputPath) {
   if (isRailway) {
     const chromium = require('@sparticuz/chromium-min');
     const executablePath = await chromium.executablePath(
-      'https://github.com/Sparticuz/chromium/releases/download/v148.0.0/chromium-v148.0.0-pack.tar'
+      'https://github.com/Sparticuz/chromium/releases/download/v132.0.0/chromium-v132.0.0-pack.tar'
     );
     launchOptions = { executablePath, args: chromium.args, headless: chromium.headless, defaultViewport: chromium.defaultViewport };
   } else {
