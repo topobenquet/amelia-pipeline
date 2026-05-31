@@ -360,14 +360,20 @@ async function generatePDF(lead, outputPath) {
 
   let launchOptions;
   if (isRailway) {
-    // Use system Chromium installed by Railway/Nixpacks (avoids downloading binary)
-    const executablePath = process.env.CHROMIUM_PATH
-      || '/usr/bin/chromium'
-      || '/usr/bin/chromium-browser';
+    const { execSync } = require('child_process');
+    let executablePath = process.env.CHROMIUM_PATH;
+    if (!executablePath) {
+      try {
+        executablePath = execSync('which chromium-browser || which chromium || which google-chrome-stable || which google-chrome').toString().trim().split('\n')[0];
+      } catch {
+        executablePath = '/usr/bin/chromium-browser';
+      }
+    }
+    console.log(`[PDF] Using Chromium at: ${executablePath}`);
     launchOptions = {
       executablePath,
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process'],
     };
   } else {
     launchOptions = { headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] };
