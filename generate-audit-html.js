@@ -360,11 +360,15 @@ async function generatePDF(lead, outputPath) {
 
   let launchOptions;
   if (isRailway) {
-    const chromium = require('@sparticuz/chromium-min');
-    const executablePath = await chromium.executablePath(
-      'https://github.com/Sparticuz/chromium/releases/download/v132.0.0/chromium-v132.0.0-pack.tar'
-    );
-    launchOptions = { executablePath, args: chromium.args, headless: chromium.headless, defaultViewport: chromium.defaultViewport };
+    // Use system Chromium installed by Railway/Nixpacks (avoids downloading binary)
+    const executablePath = process.env.CHROMIUM_PATH
+      || '/usr/bin/chromium'
+      || '/usr/bin/chromium-browser';
+    launchOptions = {
+      executablePath,
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    };
   } else {
     launchOptions = { headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] };
   }
