@@ -1,5 +1,4 @@
-const isRailway  = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RAILWAY_SERVICE_NAME;
-const puppeteer  = isRailway ? require('puppeteer-core') : require('puppeteer');
+const puppeteer  = require('puppeteer');
 const fs        = require('fs');
 const path      = require('path');
 
@@ -358,18 +357,10 @@ function buildHTML(lead) {
 async function generatePDF(lead, outputPath) {
   const html = buildHTML(lead);
 
-  let launchOptions;
-  if (isRailway) {
-    const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser';
-    console.log(`[PDF] Using Chromium at: ${executablePath}`);
-    launchOptions = {
-      executablePath,
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process'],
-    };
-  } else {
-    launchOptions = { headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] };
-  }
+  const launchOptions = {
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+  };
 
   const browser = await puppeteer.launch(launchOptions);
   const page    = await browser.newPage();
