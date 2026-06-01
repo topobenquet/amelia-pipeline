@@ -360,15 +360,7 @@ async function generatePDF(lead, outputPath) {
 
   let launchOptions;
   if (isRailway) {
-    const { execSync } = require('child_process');
-    let executablePath = process.env.CHROMIUM_PATH;
-    if (!executablePath) {
-      try {
-        executablePath = execSync('which chromium-browser || which chromium || which google-chrome-stable || which google-chrome').toString().trim().split('\n')[0];
-      } catch {
-        executablePath = '/usr/bin/chromium-browser';
-      }
-    }
+    const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser';
     console.log(`[PDF] Using Chromium at: ${executablePath}`);
     launchOptions = {
       executablePath,
