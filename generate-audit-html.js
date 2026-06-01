@@ -1,4 +1,4 @@
-const puppeteer  = require('puppeteer');
+const PDFDocument = require('pdfkit');
 const fs        = require('fs');
 const path      = require('path');
 
@@ -355,24 +355,126 @@ function buildHTML(lead) {
 }
 
 async function generatePDF(lead, outputPath) {
-  const html = buildHTML(lead);
+  const {
+    businessName, city, phone, website, googleRating, googleReviews, responseTimeHours,
+  } = lead;
 
-  const launchOptions = {
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-  };
+  const reviewCount  = googleReviews || 0;
+  const rating       = googleRating  || 0;
+  const hours        = responseTimeHours;
+  const noReply      = !hours;
+  const responseLabel = noReply ? 'No Reply (24h+)'
+    : hours < 1   ? `${Math.round(hours * 60)} minutes`
+    : `${Math.round(hours)} hours`;
 
-  const browser = await puppeteer.launch(launchOptions);
-  const page    = await browser.newPage();
-  await page.setContent(html, { waitUntil: 'networkidle0' });
-  await page.emulateMediaType('screen');
-  await page.pdf({
-    path:              outputPath,
-    width:             '800px',
-    printBackground:   true,
-    margin:            { top: '0', right: '0', bottom: '0', left: '0' },
+  const baseInq  = reviewCount >= 200 ? 45 : reviewCount >= 100 ? 32 : reviewCount >= 50 ? 22 : reviewCount >= 20 ? 16 : 12;
+  const lossRate = noReply ? 0.85 : hours > 8 ? 0.70 : hours > 4 ? 0.50 : hours > 1 ? 0.30 : 0.10;
+  const leadsLost = Math.max(1, Math.round(baseInq * lossRate));
+  const revLost   = (leadsLost * 1200 * 0.30 * 12).toLocaleString('en-US');
+
+  const score = noReply ? 28 : hours > 8 ? 42 : hours > 4 ? 58 : hours > 1 ? 72 : 91;
+  const grade = score >= 80 ? 'B+' : score >= 60 ? 'C+' : score >= 40 ? 'D' : 'F';
+
+  // Colours
+  const PURPLE = '#7C3AED';
+  const DARK   = '#0A0B1A';
+  const GRAY   = '#6B7280';
+  const RED    = '#EF4444';
+  const GREEN  = '#10B981';
+  const WHITE  = '#FFFFFF';
+  const LIGHT  = '#F9FAFB';
+
+  const doc = new PDFDocument({ size: 'LETTER', margin: 0 });
+  const stream = fs.createWriteStream(outputPath);
+  doc.pipe(stream);
+
+  const W = doc.page.width;
+
+  // ── Header band ──────────────────────────────────────────────────────────
+  doc.rect(0, 0, W, 110).fill(PURPLE);
+  doc.fillColor(WHITE).fontSize(22).font('Helvetica-Bold')
+    .text('AI RECEPTIONIST AUDIT REPORT', 40, 28, { width: W - 80 });
+  doc.fontSize(11).font('Helvetica')
+    .text(`Prepared exclusively for ${businessName}`, 40, 58);
+  doc.text(`${city}  •  ${phone || ''}  •  ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, 40, 76);
+
+  // ── Score badge ───────────────────────────────────────────────────────────
+  const badgeX = W - 110;
+  doc.circle(badgeX, 55, 38).fill(score < 50 ? RED : score < 75 ? '#F59E0B' : GREEN);
+  doc.fillColor(WHITE).fontSize(28).font('Helvetica-Bold').text(grade, badgeX - 18, 38);
+  doc.fontSize(9).font('Helvetica').text('SCORE', badgeX - 14, 68);
+
+  let y = 130;
+
+  // ── Revenue at risk ───────────────────────────────────────────────────────
+  doc.rect(30, y, W - 60, 80).fill('#FEF2F2').stroke('#FECACA');
+  doc.fillColor(RED).fontSize(13).font('Helvetica-Bold')
+    .text('⚠  ESTIMATED ANNUAL REVENUE AT RISK', 50, y + 14);
+  doc.fontSize(32).font('Helvetica-Bold')
+    .text(`$${revLost}/yr`, 50, y + 32);
+  doc.fillColor(GRAY).fontSize(10).font('Helvetica')
+    .text(`Based on ${leadsLost} missed leads/month × avg $1,200 booking × 30% close rate`, 50, y + 68, { width: W - 100 });
+
+  y += 100;
+
+  // ── Key metrics ───────────────────────────────────────────────────────────
+  const metrics = [
+    { label: 'Google Rating',    value: rating ? `${rating} ⭐` : 'N/A',   ok: rating >= 4.0 },
+    { label: 'Total Reviews',    value: String(reviewCount),               ok: reviewCount >= 50 },
+    { label: 'Response Time',    value: responseLabel,                     ok: !noReply && hours < 1 },
+    { label: 'Monthly Inquiries',value: String(baseInq),                   ok: true },
+  ];
+
+  doc.fillColor(DARK).fontSize(13).font('Helvetica-Bold').text('PERFORMANCE METRICS', 40, y);
+  y += 20;
+
+  const colW = (W - 80) / 2;
+  metrics.forEach((m, i) => {
+    const mx = 40 + (i % 2) * (colW + 10);
+    const my = y + Math.floor(i / 2) * 60;
+    doc.rect(mx, my, colW, 50).fill(LIGHT).stroke('#E5E7EB');
+    doc.fillColor(GRAY).fontSize(9).font('Helvetica').text(m.label.toUpperCase(), mx + 12, my + 10);
+    doc.fillColor(m.ok ? GREEN : RED).fontSize(16).font('Helvetica-Bold').text(m.value, mx + 12, my + 24);
   });
-  await browser.close();
+
+  y += 140;
+
+  // ── What Amelia fixes ─────────────────────────────────────────────────────
+  doc.fillColor(DARK).fontSize(13).font('Helvetica-Bold').text('HOW AMELIA AI FIXES THIS', 40, y);
+  y += 18;
+
+  const fixes = [
+    '✓  Responds to every SMS, DM, and missed call in under 60 seconds',
+    '✓  Books appointments directly into your calendar — 24/7',
+    '✓  Handles new patient FAQs, pricing questions, and follow-ups automatically',
+    '✓  Never misses a lead, even nights and weekends',
+  ];
+
+  fixes.forEach(fix => {
+    doc.fillColor(DARK).fontSize(11).font('Helvetica').text(fix, 50, y, { width: W - 100 });
+    y += 20;
+  });
+
+  y += 20;
+
+  // ── CTA ───────────────────────────────────────────────────────────────────
+  doc.rect(30, y, W - 60, 70).fill(PURPLE);
+  doc.fillColor(WHITE).fontSize(15).font('Helvetica-Bold')
+    .text('See Amelia in action — Book a free 15-min demo', 50, y + 14, { width: W - 100, align: 'center' });
+  doc.fontSize(13).font('Helvetica')
+    .text('https://clinics.amelia.im/demo', 50, y + 38, { width: W - 100, align: 'center' });
+
+  y += 90;
+
+  // ── Footer ────────────────────────────────────────────────────────────────
+  doc.fillColor(GRAY).fontSize(8).font('Helvetica')
+    .text(`Confidential  •  Prepared exclusively for ${businessName}  •  © ${new Date().getFullYear()} Amelia AI`, 40, y, { width: W - 80, align: 'center' });
+
+  doc.end();
+  await new Promise((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+  });
 }
 
 // ── Test run ──────────────────────────────────────────────────────────────────

@@ -28,7 +28,6 @@
     "nodemailer": "^8.0.8",
     "open": "^11.0.0",
     "openai": "^6.37.0",
-    "pdfkit": "^0.18.0",
-    "puppeteer": "^25.0.4"
+    "pdfkit": "^0.18.0"
   }
 }
