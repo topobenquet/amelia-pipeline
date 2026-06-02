@@ -29,7 +29,17 @@ let _stateCache    = null;
 let _contactedCache = null;
 
 async function getSheetsClient() {
-  const { auth } = getDriveClient();
+  // Always use service account for Sheets (has access, no quota issues)
+  let credentials;
+  if (process.env.GOOGLE_SERVICE_ACCOUNT) {
+    credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
+  } else {
+    credentials = JSON.parse(fs.readFileSync(path.join(__dirname, 'service-account.json'), 'utf8'));
+  }
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
   return google.sheets({ version: 'v4', auth });
 }
 
@@ -150,26 +160,37 @@ async function saveContacted(set) {
 
 // ─── Google Drive (Service Account) ──────────────────────────────────────────
 function getDriveClient() {
-  let credentials;
+  // Use OAuth user token for Drive (service accounts have no storage quota)
+  if (process.env.GOOGLE_OAUTH_TOKEN) {
+    const tokenData = JSON.parse(process.env.GOOGLE_OAUTH_TOKEN);
+    const client_id     = process.env.GOOGLE_OAUTH_CLIENT_ID;
+    const client_secret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    if (!client_id) {
+      // Local dev: read from credentials.json
+      const creds = JSON.parse(fs.readFileSync(path.join(__dirname, 'credentials.json'), 'utf8'));
+      const c = creds.installed || creds.web;
+      return (() => {
+        const oAuth2 = new google.auth.OAuth2(c.client_id, c.client_secret, 'http://localhost:3001/callback');
+        oAuth2.setCredentials(tokenData);
+        return { drive: google.drive({ version: 'v3', auth: oAuth2 }), auth: oAuth2 };
+      })();
+    }
+    const oAuth2 = new google.auth.OAuth2(client_id, client_secret, 'http://localhost:3001/callback');
+    oAuth2.setCredentials(tokenData);
+    return { drive: google.drive({ version: 'v3', auth: oAuth2 }), auth: oAuth2 };
+  }
 
-  // Railway/cloud: service account JSON in env var
+  // Fallback: service account (for Sheets only — Drive upload will fail)
+  let credentials;
   if (process.env.GOOGLE_SERVICE_ACCOUNT) {
     credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
   } else {
-    const SA_PATH = process.env.GOOGLE_SERVICE_ACCOUNT_PATH
-      || path.join(__dirname, 'service-account.json');
-    if (!fs.existsSync(SA_PATH)) {
-      throw new Error(`Service account not found. Set GOOGLE_SERVICE_ACCOUNT env var or place service-account.json here.`);
-    }
+    const SA_PATH = path.join(__dirname, 'service-account.json');
     credentials = JSON.parse(fs.readFileSync(SA_PATH, 'utf8'));
   }
-
   const auth = new google.auth.GoogleAuth({
     credentials,
-    scopes: [
-      'https://www.googleapis.com/auth/drive.file',
-      'https://www.googleapis.com/auth/spreadsheets',
-    ],
+    scopes: ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/spreadsheets'],
   });
   return { drive: google.drive({ version: 'v3', auth }), auth };
 }
@@ -222,6 +243,9 @@ async function appendToSheet(rows) {
 }
 
 async function getDriveFolderId(drive) {
+  // Use explicit folder ID from env if set (preferred — avoids Drive quota issues)
+  if (process.env.DRIVE_FOLDER_ID) return process.env.DRIVE_FOLDER_ID;
+
   const res = await drive.files.list({
     q: `name='${DRIVE_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
     fields: 'files(id)',
