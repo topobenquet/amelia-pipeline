@@ -1,2 +1,2 @@
 [phases.setup]
-aptPkgs = ["fonts-liberation", "libgbm1"]
+aptPkgs = ["unzip", "libnss3", "libatk-bridge2.0-0", "libgtk-3-0", "libgbm1", "fonts-liberation"]
