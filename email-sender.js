@@ -100,9 +100,11 @@ async function sendSequenceEmail(lead, step) {
   const cleanText = text.replace(/\n+Juan Benquet[\s\S]*$/m, '').trimEnd();
 
   // Convert plain text to HTML paragraphs (no UTMs on body links — audit goes to Drive)
+  // Wrap bare URLs in <a> tags so they're clickable in all clients (Outlook doesn't auto-link)
+  const linkify = s => s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#7C3AED;font-weight:bold;">$1</a>');
   const bodyHtml = cleanText
     .split(/\n\n+/)
-    .map(p => `<p style="margin:0 0 14px;line-height:1.6;">${p.replace(/\n/g, '<br>')}</p>`)
+    .map(p => `<p style="margin:0 0 14px;line-height:1.6;">${linkify(p).replace(/\n/g, '<br>')}</p>`)
     .join('');
 
   const html = `
