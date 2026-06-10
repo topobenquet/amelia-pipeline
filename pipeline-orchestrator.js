@@ -926,3 +926,5 @@ if (process.env.RUN_NOW === 'true') {
 }
 
 process.on('SIGTERM', () => { log('Received SIGTERM, shutting down'); process.exit(0); });
+
+module.exports = { runPipeline, phase1b_processBacklog, phase3_sendFollowUps };
