@@ -355,6 +355,8 @@ function buildHTML(lead) {
 }
 
 
+function log_safe(msg) { try { console.log(`[${new Date().toISOString()}] ${msg}`); } catch {} }
+
 async function generatePDF(lead, outputPath) {
   const html = buildHTML(lead);
   const puppeteer = require('puppeteer');
@@ -364,7 +366,13 @@ async function generatePDF(lead, outputPath) {
   });
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    try {
+      await page.setContent(html, { waitUntil: 'networkidle2', timeout: 20000 });
+    } catch {
+      // Slow external resources (fonts) — render with what loaded
+      log_safe('PDF: networkidle timeout, rendering anyway');
+    }
+    await new Promise(r => setTimeout(r, 500));
     await page.emulateMediaType('screen');
     await page.pdf({ path: outputPath, width: '800px', printBackground: true, margin: { top: '0', right: '0', bottom: '0', left: '0' } });
   } finally {

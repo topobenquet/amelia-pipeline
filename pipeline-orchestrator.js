@@ -217,8 +217,7 @@ async function ensureSheetHeaders(sheets, sheetId) {
 }
 
 async function getSheetClient() {
-  const { auth } = getDriveClient();
-  const sheets = google.sheets({ version: 'v4', auth });
+  const sheets = await getSheetsClient();
   const sheetId = process.env.GOOGLE_SHEETS_ID;
   await ensureSheetHeaders(sheets, sheetId);
   return { sheets, sheetId };
@@ -228,8 +227,7 @@ async function appendToSheet(rows) {
   const sheetId = process.env.GOOGLE_SHEETS_ID;
   if (!sheetId) return;
   try {
-    const { auth } = getDriveClient();
-    const sheets = google.sheets({ version: 'v4', auth });
+    const sheets = await getSheetsClient();
     await ensureSheetHeaders(sheets, sheetId);
     await sheets.spreadsheets.values.append({
       spreadsheetId: sheetId,
@@ -507,7 +505,7 @@ async function phase1_processReadyBatches() {
   const ready  = state.batches.filter(b => {
     if (b.status !== 'sms_sent') return false;
     const hoursSinceSent = (Date.now() - new Date(b.sentAt).getTime()) / 3600000;
-    return hoursSinceSent >= 24;
+    return hoursSinceSent >= 23;
   });
 
   if (!ready.length) { log('  No batches ready for processing'); return; }
@@ -579,10 +577,17 @@ async function phase1_processReadyBatches() {
       await new Promise(r => setTimeout(r, 1000));
     }
 
-    batch.status     = 'processed';
-    batch.processedAt = new Date().toISOString();
-    batch.leads       = entries;
-    log(`  Batch ${batch.date} done — ${processed} reports sent`);
+    const withEmail = entries.filter(e => e.email).length;
+    if (processed === 0 && withEmail > 0) {
+      // Every lead failed (e.g. expired token, missing module) — keep for retry tomorrow
+      batch.leads = entries;
+      log(`  Batch ${batch.date} FAILED (0/${withEmail} sent) — will retry next run`);
+    } else {
+      batch.status      = 'processed';
+      batch.processedAt = new Date().toISOString();
+      batch.leads       = entries;
+      log(`  Batch ${batch.date} done — ${processed} reports sent`);
+    }
   }
 
   await saveState(state);
