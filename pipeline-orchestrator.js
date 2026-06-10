@@ -240,6 +240,43 @@ async function appendToSheet(rows) {
   }
 }
 
+// ─── Email sequences tab (one row per lead — survives state pruning) ──────────
+const SEQ_TAB = '_email_sequences';
+const SEQ_HEADERS = ['Name','City','Phone','Email','Website','Rating','Reviews','Bucket','ResponseTime','RevenueLost','AuditLink','Niche','Step','FirstSentAt','NextSendAt','LastSentAt'];
+
+async function ensureRowsTab(sheets, title, headers) {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: process.env.GOOGLE_SHEETS_ID });
+  const exists = meta.data.sheets.some(s => s.properties.title === title);
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title } } }] },
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+      range: `${title}!A1`, valueInputOption: 'RAW',
+      requestBody: { values: [headers] },
+    });
+  }
+}
+
+async function appendSequenceRow(entry) {
+  const sheets = await getSheetsClient();
+  await ensureRowsTab(sheets, SEQ_TAB, SEQ_HEADERS);
+  const seq = entry.emailSequence;
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+    range: `${SEQ_TAB}!A1`, valueInputOption: 'RAW',
+    requestBody: { values: [[
+      entry.name, entry.city || '', entry.phone || '', entry.email,
+      entry.website || '', entry.rating || '', entry.reviews || '',
+      entry.bucket || 'no_reply', entry.responseTime || '', entry.revenueLost || '',
+      entry.auditLink || '', entry.niche || process.env.NICHE || 'chiro',
+      seq.step, seq.firstSentAt, seq.nextSendAt || '', seq.lastSentAt || seq.firstSentAt,
+    ]] },
+  });
+}
+
 async function getDriveFolderId(drive) {
   // Use explicit folder ID from env if set (preferred — avoids Drive quota issues)
   if (process.env.DRIVE_FOLDER_ID) return process.env.DRIVE_FOLDER_ID;
@@ -348,7 +385,10 @@ async function checkResponses(entries) {
       const res = await axios.get(`${GHL_BASE}/conversations/${entry.conversationId}/messages`, { headers: GHL_H });
       const messages = res.data?.messages?.messages || [];
       const inbound = messages.find(m => m.direction === 'inbound' && new Date(m.dateAdded).getTime() > new Date(entry.sentAt).getTime());
-      if (inbound) {
+      if (inbound && /\bstop\b|unsubscribe|dnd enabled|do not contact|not interested/i.test(inbound.body || '')) {
+        entry.status = 'opted_out';
+        entry.responseText = inbound.body;
+      } else if (inbound) {
         entry.status = 'responded';
         entry.respondedAt = inbound.dateAdded;
         entry.responseText = inbound.body;
@@ -526,6 +566,7 @@ async function phase1_processReadyBatches() {
     let processed = 0;
     for (const entry of entries) {
       if (!entry.email) continue;
+      if (entry.status === 'opted_out') { log(`    🚫 ${entry.name} opted out — skipped`); continue; }
       try {
         // Generate + upload PDF + create short link
         const driveLink = await generateAndUploadPDF(entry, drive, folderId);
@@ -557,6 +598,8 @@ async function phase1_processReadyBatches() {
           lastSentAt:  firstSentAt,
           nextSendAt:  nextSendDate(firstSentAt, 1).toISOString(),
         };
+        // Persist sequence to its own tab — state batches get pruned, this survives
+        await appendSequenceRow(entry);
 
         // Update Sheets row with results
         await appendToSheet([[
@@ -577,7 +620,7 @@ async function phase1_processReadyBatches() {
       await new Promise(r => setTimeout(r, 1000));
     }
 
-    const withEmail = entries.filter(e => e.email).length;
+    const withEmail = entries.filter(e => e.email && e.status !== 'opted_out').length;
     if (processed === 0 && withEmail > 0) {
       // Every lead failed (e.g. expired token, missing module) — keep for retry tomorrow
       batch.leads = entries;
@@ -690,37 +733,167 @@ async function phase2_scrapeAndSend() {
 // ─── PHASE 3: Send follow-up emails in sequence ───────────────────────────────
 async function phase3_sendFollowUps() {
   log('── PHASE 3: Sending follow-up emails ──');
-  const state = await loadState();
   const { CUMULATIVE_DELAYS } = require('./email-sender.js');
+  const sheets = await getSheetsClient();
+  await ensureRowsTab(sheets, SEQ_TAB, SEQ_HEADERS);
+  const res  = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.GOOGLE_SHEETS_ID, range: `${SEQ_TAB}!A2:P`,
+  });
+  const rows = res.data.values || [];
   let sent = 0;
 
-  for (const batch of state.batches) {
-    if (batch.status !== 'processed') continue;
-    for (const entry of (batch.leads || [])) {
-      if (!entry.email || !entry.emailSequence) continue;
-      const seq = entry.emailSequence;
-      const nextStep = seq.step + 1;
-      if (nextStep >= CUMULATIVE_DELAYS.length) continue; // sequence complete
-      if (!isDue(seq.nextSendAt)) continue;
+  for (let i = 0; i < rows.length; i++) {
+    const [name, city, phone, email, website, rating, reviews, bucket,
+           responseTime, revenueLost, auditLink, niche, stepS, firstSentAt, nextSendAt] = rows[i];
+    if (!email || !firstSentAt) continue;
+    const step     = parseInt(stepS || '0', 10);
+    const nextStep = step + 1;
+    if (nextStep >= CUMULATIVE_DELAYS.length) continue; // sequence complete
+    if (!nextSendAt || !isDue(nextSendAt)) continue;
 
-      try {
-        await sendSequenceEmail(entry, nextStep);
-        seq.step       = nextStep;
-        seq.lastSentAt = new Date().toISOString();
-        seq.nextSendAt = nextStep + 1 < CUMULATIVE_DELAYS.length
-          ? nextSendDate(seq.firstSentAt, nextStep + 1).toISOString()
-          : null;
-        sent++;
-        log(`  ✅ Step ${nextStep} → ${entry.name} (${entry.email})`);
-      } catch (e) {
-        log(`  ❌ Step ${nextStep} failed for ${entry.email}: ${e.message}`);
-      }
-      await new Promise(r => setTimeout(r, 2000));
+    const entry = {
+      name, city, phone, email, website,
+      rating: parseFloat(rating) || null, reviews: parseInt(reviews) || 0,
+      bucket, responseTime, revenueLost, auditLink, niche,
+      status: bucket === 'no_reply' ? 'no_reply' : 'responded',
+    };
+
+    try {
+      await sendSequenceEmail(entry, nextStep);
+      const now     = new Date().toISOString();
+      const newNext = nextStep + 1 < CUMULATIVE_DELAYS.length
+        ? nextSendDate(firstSentAt, nextStep + 1).toISOString() : '';
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+        range: `${SEQ_TAB}!M${i + 2}:P${i + 2}`, valueInputOption: 'RAW',
+        requestBody: { values: [[nextStep, firstSentAt, newNext, now]] },
+      });
+      sent++;
+      log(`  ✅ Step ${nextStep} → ${name} (${email})`);
+    } catch (e) {
+      log(`  ❌ Step ${nextStep} failed for ${email}: ${e.message}`);
     }
+    await new Promise(r => setTimeout(r, 2000));
   }
 
-  await saveState(state);
   log(`  Phase 3 done — ${sent} follow-up emails sent`);
+}
+
+// ─── PHASE 1b: Process recovered backlog (drip N/day to protect Gmail rep) ────
+const BACKLOG_TAB = '_email_backlog';
+
+async function checkResponseByPhone(phone, sentDate) {
+  try {
+    const q = await axios.get(`${GHL_BASE}/contacts/`, {
+      headers: GHL_H,
+      params: { locationId: process.env.GHL_LOCATION_ID, query: phone },
+    });
+    const contact = q.data?.contacts?.[0];
+    if (!contact) return { status: 'no_reply', responseTimeHours: null };
+
+    const conv = await axios.get(`${GHL_BASE}/conversations/search`, {
+      headers: GHL_H,
+      params: { locationId: process.env.GHL_LOCATION_ID, contactId: contact.id },
+    });
+    const convId = conv.data?.conversations?.[0]?.id;
+    if (!convId) return { status: 'no_reply', responseTimeHours: null };
+
+    const msgs = await axios.get(`${GHL_BASE}/conversations/${convId}/messages`, { headers: GHL_H });
+    const messages = msgs.data?.messages?.messages || [];
+    const inbound = messages.find(m => m.direction === 'inbound');
+    if (inbound) {
+      // Opt-outs (STOP / DnD) must never enter the email sequence
+      if (/\bstop\b|unsubscribe|dnd enabled|do not contact|not interested/i.test(inbound.body || '')) {
+        return { status: 'opted_out', responseTimeHours: null };
+      }
+      const hours = Math.max(0.1, (new Date(inbound.dateAdded) - new Date(sentDate)) / 3600000);
+      return { status: 'responded', responseTimeHours: hours, respondedAt: inbound.dateAdded };
+    }
+  } catch {}
+  return { status: 'no_reply', responseTimeHours: null };
+}
+
+async function phase1b_processBacklog() {
+  const cap = parseInt(process.env.BACKLOG_PER_DAY || '25', 10);
+  if (!cap) return;
+  log('── PHASE 1b: Processing recovered backlog ──');
+
+  const sheets = await getSheetsClient();
+  let res;
+  try {
+    res = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.GOOGLE_SHEETS_ID, range: `${BACKLOG_TAB}!A2:J`,
+    });
+  } catch { log('  No backlog tab — skipping'); return; }
+
+  const rows   = res.data.values || [];
+  const queued = rows.map((r, i) => ({ r, i })).filter(x => (x.r[9] || '') === 'queued').slice(0, cap);
+  if (!queued.length) { log('  Backlog empty'); return; }
+  log(`  ${queued.length} backlog leads to process (cap ${cap}/day)`);
+
+  let drive, folderId;
+  try {
+    ({ drive } = getDriveClient());
+    folderId = await getDriveFolderId(drive);
+  } catch (e) { log(`  Drive setup failed: ${e.message}`); return; }
+
+  let processed = 0;
+  for (const { r, i } of queued) {
+    const [name, city, phone, email, website, rating, reviews, sentDate, niche] = r;
+    const entry = {
+      name, city, phone, email, website,
+      rating: parseFloat(rating) || null, reviews: parseInt(reviews) || 0,
+      niche: niche || 'chiro', sentAt: sentDate,
+    };
+    try {
+      Object.assign(entry, await checkResponseByPhone(phone, sentDate));
+
+      if (entry.status === 'opted_out') {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+          range: `${BACKLOG_TAB}!J${i + 2}`, valueInputOption: 'RAW',
+          requestBody: { values: [['skipped_optout']] },
+        });
+        log(`    🚫 ${name} opted out — skipped`);
+        continue;
+      }
+
+      const driveLink = await generateAndUploadPDF(entry, drive, folderId);
+      const slug      = entry.name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 50);
+      const auditLink = await createShortLink(driveLink, slug);
+
+      const hours    = entry.responseTimeHours;
+      const bucket   = entry.status !== 'responded' ? 'no_reply' : hours <= 4 ? 'fast_reply' : 'slow_reply';
+      const baseInq  = (entry.reviews||0) >= 200 ? 45 : (entry.reviews||0) >= 100 ? 32 : (entry.reviews||0) >= 50 ? 22 : (entry.reviews||0) >= 20 ? 16 : 12;
+      const lossRate = !hours ? 0.85 : hours > 8 ? 0.70 : hours > 4 ? 0.50 : hours > 1 ? 0.30 : 0.10;
+
+      entry.bucket       = bucket;
+      entry.responseTime = !hours ? 'over 24 hours' : hours < 1 ? `${Math.round(hours*60)} minutes` : `${Math.round(hours)} hours`;
+      entry.revenueLost  = '$' + (Math.max(1, Math.round(baseInq * lossRate)) * 1200 * 0.30 * 12).toLocaleString('en-US') + '/yr';
+      entry.auditLink    = auditLink;
+
+      await sendSequenceEmail(entry, 0);
+      const firstSentAt = new Date().toISOString();
+      entry.emailSequence = {
+        step: 0, firstSentAt, lastSentAt: firstSentAt,
+        nextSendAt: nextSendDate(firstSentAt, 1).toISOString(),
+      };
+      await appendSequenceRow(entry);
+
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+        range: `${BACKLOG_TAB}!J${i + 2}`, valueInputOption: 'RAW',
+        requestBody: { values: [['sent']] },
+      });
+
+      processed++;
+      log(`    ✅ ${entry.name} → ${bucket}`);
+    } catch (e) {
+      log(`    ❌ ${name}: ${e.message}`);
+    }
+    await new Promise(r2 => setTimeout(r2, 1500));
+  }
+  log(`  Phase 1b done — ${processed} backlog leads emailed`);
 }
 
 // ─── Main pipeline run ────────────────────────────────────────────────────────
@@ -729,6 +902,7 @@ async function runPipeline() {
   log('  Amelia Pipeline — daily run starting');
   log('═══════════════════════════════════════');
   try { await phase1_processReadyBatches(); } catch (e) { log(`PHASE 1 ERROR: ${e.message}`); }
+  try { await phase1b_processBacklog(); }     catch (e) { log(`PHASE 1b ERROR: ${e.message}`); }
   try { await phase2_scrapeAndSend(); }       catch (e) { log(`PHASE 2 ERROR: ${e.message}`); }
   try { await phase3_sendFollowUps(); }       catch (e) { log(`PHASE 3 ERROR: ${e.message}`); }
   log('  Pipeline run complete\n');
