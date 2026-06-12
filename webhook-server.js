@@ -125,6 +125,21 @@ app.post('/webhook/ghl', async (req, res) => {
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
+// PDF health check — verifies Chromium can launch and render in this environment
+app.get('/health/pdf', async (req, res) => {
+  try {
+    const { generatePDF } = require('./generate-audit-html.js');
+    const out = path.join('/tmp', 'health-check.pdf');
+    await generatePDF({
+      businessName: 'Health Check', city: 'Test City', phone: '',
+      googleRating: 5, googleReviews: 10, responseTimeHours: null,
+    }, out);
+    res.json({ ok: true, bytes: fs.statSync(out).size });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: (e.message || '').slice(0, 300) });
+  }
+});
+
 // ─── GHL OAuth flow ───────────────────────────────────────────────────────────
 const OAUTH_TOKEN_FILE = path.join(__dirname, 'ghl-oauth-tokens.json');
 

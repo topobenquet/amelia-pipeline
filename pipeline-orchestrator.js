@@ -149,15 +149,6 @@ async function saveContacted(set) {
   } catch (e) { log(`  Contacted Sheets sync failed: ${e.message}`); }
 }
 
-async function saveContacted(set) {
-  _contactedCache = set;
-  try { fs.writeFileSync(CONTACTED_FILE, JSON.stringify([...set])); } catch {}
-  try {
-    const sheets = await getSheetsClient();
-    await writeSheetCell(sheets, SHEETS_CONTACTED_TAB, [...set]);
-  } catch (e) { log(`  Contacted Sheets sync failed: ${e.message}`); }
-}
-
 // ─── Google Drive (Service Account) ──────────────────────────────────────────
 function getDriveClient() {
   // Use OAuth user token for Drive (service accounts have no storage quota)
@@ -548,7 +539,7 @@ async function phase1_processReadyBatches() {
     return hoursSinceSent >= 23;
   });
 
-  if (!ready.length) { log('  No batches ready for processing'); return; }
+  if (!ready.length) { log('  No batches ready for processing'); return { reports: 0, failedBatches: 0 }; }
 
   let drive, auth, folderId;
   try {
@@ -556,8 +547,9 @@ async function phase1_processReadyBatches() {
     folderId = await getDriveFolderId(drive);
   } catch (e) {
     log(`  Drive setup failed: ${e.message}`);
-    return;
+    return { reports: 0, failedBatches: ready.length };
   }
+  let totalReports = 0, failedBatches = 0;
 
   for (const batch of ready) {
     log(`  Processing batch ${batch.date} (${batch.leads.length} leads)...`);
@@ -624,16 +616,19 @@ async function phase1_processReadyBatches() {
     if (processed === 0 && withEmail > 0) {
       // Every lead failed (e.g. expired token, missing module) — keep for retry tomorrow
       batch.leads = entries;
+      failedBatches++;
       log(`  Batch ${batch.date} FAILED (0/${withEmail} sent) — will retry next run`);
     } else {
       batch.status      = 'processed';
       batch.processedAt = new Date().toISOString();
       batch.leads       = entries;
+      totalReports += processed;
       log(`  Batch ${batch.date} done — ${processed} reports sent`);
     }
   }
 
   await saveState(state);
+  return { reports: totalReports, failedBatches };
 }
 
 // ─── PHASE 2: Scrape new leads + send SMS ─────────────────────────────────────
@@ -728,6 +723,7 @@ async function phase2_scrapeAndSend() {
   ]);
   await appendToSheet(sheetRows);
   log(`  Logged ${sheetRows.length} rows to Sheets`);
+  return { smsSent, city };
 }
 
 // ─── PHASE 3: Send follow-up emails in sequence ───────────────────────────────
@@ -777,6 +773,7 @@ async function phase3_sendFollowUps() {
   }
 
   log(`  Phase 3 done — ${sent} follow-up emails sent`);
+  return { sent };
 }
 
 // ─── PHASE 1b: Process recovered backlog (drip N/day to protect Gmail rep) ────
@@ -815,7 +812,7 @@ async function checkResponseByPhone(phone, sentDate) {
 
 async function phase1b_processBacklog() {
   const cap = parseInt(process.env.BACKLOG_PER_DAY || '25', 10);
-  if (!cap) return;
+  if (!cap) return { reports: 0 };
   log('── PHASE 1b: Processing recovered backlog ──');
 
   const sheets = await getSheetsClient();
@@ -824,18 +821,18 @@ async function phase1b_processBacklog() {
     res = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.GOOGLE_SHEETS_ID, range: `${BACKLOG_TAB}!A2:J`,
     });
-  } catch { log('  No backlog tab — skipping'); return; }
+  } catch { log('  No backlog tab — skipping'); return { reports: 0 }; }
 
   const rows   = res.data.values || [];
   const queued = rows.map((r, i) => ({ r, i })).filter(x => (x.r[9] || '') === 'queued').slice(0, cap);
-  if (!queued.length) { log('  Backlog empty'); return; }
+  if (!queued.length) { log('  Backlog empty'); return { reports: 0 }; }
   log(`  ${queued.length} backlog leads to process (cap ${cap}/day)`);
 
   let drive, folderId;
   try {
     ({ drive } = getDriveClient());
     folderId = await getDriveFolderId(drive);
-  } catch (e) { log(`  Drive setup failed: ${e.message}`); return; }
+  } catch (e) { log(`  Drive setup failed: ${e.message}`); return { reports: 0, failed: true }; }
 
   let processed = 0;
   for (const { r, i } of queued) {
@@ -894,6 +891,46 @@ async function phase1b_processBacklog() {
     await new Promise(r2 => setTimeout(r2, 1500));
   }
   log(`  Phase 1b done — ${processed} backlog leads emailed`);
+  return { reports: processed, queued: queued.length };
+}
+
+// ─── Daily run summary email ─────────────────────────────────────────────────
+async function sendRunSummary(r) {
+  try {
+    const nodemailer = require('nodemailer');
+    const t = nodemailer.createTransport({
+      host: 'smtp.gmail.com', port: 587, secure: false,
+      auth: { user: process.env.GMAIL_FROM, pass: process.env.GMAIL_APP_PASSWORD },
+    });
+
+    const reports   = (r.phase1?.reports || 0) + (r.phase1b?.reports || 0);
+    const hasIssues = r.errors.length > 0 || (r.phase1?.failedBatches || 0) > 0 || r.phase1b?.failed;
+    const date      = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+
+    const lines = [
+      `Amelia Pipeline — ${date}`,
+      '',
+      `📄 Reportes enviados (PDF + email día 0): ${reports}`,
+      `   · Batches nuevos:  ${r.phase1?.reports ?? '—'}${(r.phase1?.failedBatches||0) > 0 ? `  ⚠️ ${r.phase1.failedBatches} batch(es) FALLARON — reintentan mañana` : ''}`,
+      `   · Backlog:         ${r.phase1b?.reports ?? '—'}${r.phase1b?.failed ? '  ⚠️ FALLÓ' : ''}`,
+      `📱 SMS enviados:      ${r.phase2?.smsSent ?? '—'}  (${r.phase2?.city || '—'})`,
+      `📬 Follow-ups:        ${r.phase3?.sent ?? '—'}`,
+      '',
+      r.errors.length ? `ERRORES:\n${r.errors.map(e => '  · ' + e).join('\n')}` : 'Sin errores.',
+      '',
+      `Sheet: https://docs.google.com/spreadsheets/d/${process.env.GOOGLE_SHEETS_ID}`,
+    ];
+
+    await t.sendMail({
+      from: `Amelia Pipeline <${process.env.GMAIL_FROM}>`,
+      to: process.env.SUMMARY_EMAIL || 'ppcmccjb@gmail.com',
+      subject: `${hasIssues ? '⚠️' : '✅'} Amelia Pipeline ${date} — ${reports} reportes, ${r.phase2?.smsSent ?? 0} SMS, ${r.phase3?.sent ?? 0} follow-ups`,
+      text: lines.join('\n'),
+    });
+    log('  Run summary emailed');
+  } catch (e) {
+    log(`  Summary email failed: ${e.message}`);
+  }
 }
 
 // ─── Main pipeline run ────────────────────────────────────────────────────────
@@ -901,10 +938,12 @@ async function runPipeline() {
   log('═══════════════════════════════════════');
   log('  Amelia Pipeline — daily run starting');
   log('═══════════════════════════════════════');
-  try { await phase1_processReadyBatches(); } catch (e) { log(`PHASE 1 ERROR: ${e.message}`); }
-  try { await phase1b_processBacklog(); }     catch (e) { log(`PHASE 1b ERROR: ${e.message}`); }
-  try { await phase2_scrapeAndSend(); }       catch (e) { log(`PHASE 2 ERROR: ${e.message}`); }
-  try { await phase3_sendFollowUps(); }       catch (e) { log(`PHASE 3 ERROR: ${e.message}`); }
+  const r = { phase1: null, phase1b: null, phase2: null, phase3: null, errors: [] };
+  try { r.phase1  = await phase1_processReadyBatches(); } catch (e) { log(`PHASE 1 ERROR: ${e.message}`);  r.errors.push(`Phase 1: ${e.message}`); }
+  try { r.phase1b = await phase1b_processBacklog(); }     catch (e) { log(`PHASE 1b ERROR: ${e.message}`); r.errors.push(`Phase 1b: ${e.message}`); }
+  try { r.phase2  = await phase2_scrapeAndSend(); }       catch (e) { log(`PHASE 2 ERROR: ${e.message}`);  r.errors.push(`Phase 2: ${e.message}`); }
+  try { r.phase3  = await phase3_sendFollowUps(); }       catch (e) { log(`PHASE 3 ERROR: ${e.message}`);  r.errors.push(`Phase 3: ${e.message}`); }
+  await sendRunSummary(r);
   log('  Pipeline run complete\n');
 }
 
@@ -927,4 +966,4 @@ if (process.env.RUN_NOW === 'true') {
 
 process.on('SIGTERM', () => { log('Received SIGTERM, shutting down'); process.exit(0); });
 
-module.exports = { runPipeline, phase1b_processBacklog, phase3_sendFollowUps };
+module.exports = { runPipeline, phase1_processReadyBatches, phase1b_processBacklog, phase3_sendFollowUps };
