@@ -1,0 +1,12 @@
+node_modules
+audits
+*.log
+.env
+.env.*
+token.json
+credentials.json
+service-account.json
+ghl-oauth-tokens.json
+pipeline-state.json
+contacted-phones.json
+.git
