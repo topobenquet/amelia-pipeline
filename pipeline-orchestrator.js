@@ -399,17 +399,25 @@ const { sendSequenceEmail, nextSendDate, isDue } = require('./email-sender.js');
 // ─── Short.io link shortener ──────────────────────────────────────────────────
 async function createShortLink(driveUrl, slug) {
   if (!process.env.SHORT_IO_API_KEY) return driveUrl;
-  try {
-    const res = await axios.post('https://api.short.io/links', {
-      domain:      process.env.SHORT_IO_DOMAIN || 'go.amelia.im',
-      originalURL: driveUrl,
-      path:        slug,
-    }, { headers: { authorization: process.env.SHORT_IO_API_KEY, 'content-type': 'application/json' } });
-    return res.data.shortURL || driveUrl;
-  } catch (e) {
-    log(`  Short.io failed (${e.response?.data?.error || e.message}), using Drive link`);
-    return driveUrl;
+  // Retry with a unique suffix if the path is taken (re-runs, same-name businesses)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const linkPath = attempt === 0 ? slug : `${slug}-${Math.random().toString(36).slice(2, 6)}`;
+    try {
+      const res = await axios.post('https://api.short.io/links', {
+        domain:      process.env.SHORT_IO_DOMAIN || 'go.amelia.im',
+        originalURL: driveUrl,
+        path:        linkPath,
+      }, { headers: { authorization: process.env.SHORT_IO_API_KEY, 'content-type': 'application/json' } });
+      return res.data.shortURL || driveUrl;
+    } catch (e) {
+      const msg = JSON.stringify(e.response?.data || e.message);
+      if (e.response?.status === 409 || /exist|duplicate|taken/i.test(msg)) continue; // path taken — retry with suffix
+      log(`  Short.io failed (${msg.slice(0, 120)}), using Drive link`);
+      return driveUrl;
+    }
   }
+  log(`  Short.io: no free path for ${slug} after 3 tries, using Drive link`);
+  return driveUrl;
 }
 
 // ─── Google Maps scrape ───────────────────────────────────────────────────────
