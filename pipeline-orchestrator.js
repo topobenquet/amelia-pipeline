@@ -961,10 +961,35 @@ const { startWebhookServer, sendDailySummary } = require('./webhook-server');
 // Always start webhook server (handles inbound SMS + health check)
 startWebhookServer();
 
+// Startup self-check: verify Drive auth works, alert immediately if not.
+// Catches a stale GOOGLE_OAUTH_TOKEN on Railway before it silently breaks Phase 1/1b.
+async function driveSelfCheck() {
+  try {
+    const { drive } = getDriveClient();
+    const folderId  = await getDriveFolderId(drive);
+    await drive.files.list({ q: `'${folderId}' in parents and trashed=false`, fields: 'files(id)', pageSize: 1 });
+    log('  ✅ Drive self-check OK');
+  } catch (e) {
+    log(`  ❌ Drive self-check FAILED: ${e.message}`);
+    try {
+      const nodemailer = require('nodemailer');
+      const t = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 587, secure: false,
+        auth: { user: process.env.GMAIL_FROM, pass: process.env.GMAIL_APP_PASSWORD } });
+      await t.sendMail({
+        from: `Amelia Pipeline <${process.env.GMAIL_FROM}>`,
+        to: process.env.SUMMARY_EMAIL || 'ppcmccjb@gmail.com',
+        subject: '🚨 Amelia Pipeline — Drive token ROTO (PDFs no se generan)',
+        text: `El token de Google Drive en Railway no funciona, así que Phase 1 y Phase 1b no pueden generar ni subir PDFs.\n\nError: ${e.message}\n\nSolución: re-autenticar (node auth-drive.js) y pegar el nuevo GOOGLE_OAUTH_TOKEN en Railway.`,
+      });
+      log('  Drive failure alert emailed');
+    } catch (e2) { log(`  Alert email also failed: ${e2.message}`); }
+  }
+}
+driveSelfCheck();
+
 // Always schedule daily cron regardless of RUN_NOW
 log('Pipeline scheduler started — daily run at 10:00 AM EST');
 cron.schedule('0 10 * * *', runPipeline, { timezone: 'America/New_York' });
-cron.schedule('30 10 * * *', sendDailySummary, { timezone: 'America/New_York' });
 
 // If RUN_NOW=true, also run immediately (e.g. after a new deploy)
 if (process.env.RUN_NOW === 'true') {
